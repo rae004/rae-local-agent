@@ -29,6 +29,7 @@ Shape of the escalation path, deliberately not in this phase:
 from __future__ import annotations
 
 import difflib
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -37,9 +38,13 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 # --- config ---------------------------------------------------------------
+# Overridable via env vars so the server runs for anyone, not just me.
+#   LOCAL_AGENT_OLLAMA_HOST  base URL of the Ollama server (no path)
+#   LOCAL_AGENT_MODEL        Ollama model tag to call
 
-OLLAMA_URL = "http://workhorse:11434/api/generate"
-MODEL = "qwen2.5-coder:32b"
+_OLLAMA_HOST = os.environ.get("LOCAL_AGENT_OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_URL = f"{_OLLAMA_HOST.rstrip('/')}/api/generate"
+MODEL = os.environ.get("LOCAL_AGENT_MODEL", "qwen2.5-coder:32b")
 TIMEOUT_SECONDS = 600
 MAX_FILE_BYTES = 100_000
 
