@@ -30,12 +30,15 @@ from __future__ import annotations
 
 import difflib
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
 import httpx
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
+
+import job
 
 # --- config ---------------------------------------------------------------
 # Overridable via env vars so the server runs for anyone, not just me.
@@ -190,6 +193,71 @@ async def apply_transformation(
             if file_diff:
                 diffs.append(file_diff)
     return "".join(diffs)
+
+
+# --- Phase B: enqueue_job --------------------------------------------------
+# Fire-and-forget surface. The worker (worker.py, run as a systemd user
+# service) picks the job up from jobs/pending/ asynchronously. B1 proves the
+# queue mechanic in isolation; model handoff, git branch, draft PR arrive in
+# B2–B5. See MILESTONES.md.
+
+
+def _make_job_record(spec: str, scope: list[str], repo_root: str) -> dict:
+    """Build the on-disk job record. Raises if repo_root is not a directory."""
+    root = Path(repo_root).resolve()
+    if not root.is_dir():
+        raise ValueError(f"repo_root is not a directory: {repo_root}")
+    return {
+        "id": job.new_id(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "spec": spec,
+        "scope": scope,
+        "repo_root": str(root),
+    }
+
+
+@mcp.tool()
+async def enqueue_job(
+    spec: Annotated[
+        str,
+        Field(
+            description=(
+                "Tight description of the mechanical operation, same shape "
+                "as `apply_transformation`. Baked into the PR body when the "
+                "worker completes."
+            )
+        ),
+    ],
+    scope: Annotated[
+        list[str],
+        Field(description="Repo-relative file paths to transform."),
+    ],
+    repo_root: Annotated[
+        str,
+        Field(
+            description=(
+                "Absolute path to the target repository root. `scope` paths "
+                "resolve against this. The worker will branch off this "
+                "repo's current HEAD and push a draft PR."
+            )
+        ),
+    ],
+) -> str:
+    """Enqueue a code-transformation job for the background worker.
+
+    Fire-and-forget. Returns the job id immediately; the worker handles the
+    rest. Use `get_job_status(id)` (B6) to check on it later, or watch
+    GitHub for the draft PR (B5).
+
+    Use this instead of `apply_transformation` when the result doesn't need
+    to be reviewed inline — e.g. a type-hint sweep that can wait for a draft
+    PR, or a multi-file rename to come back during the next review window.
+
+    Phase B is being built in slices; this milestone (B1) only moves jobs
+    pending → running → done. Model, git, and PR arrive in B2–B5.
+    """
+    record = _make_job_record(spec, scope, repo_root)
+    return job.write_pending(record)
 
 
 if __name__ == "__main__":
