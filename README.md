@@ -18,9 +18,10 @@ a 32B coder can do locally.
 ## Status
 
 - **Phase A**: one tool, advisory, one-shot per file. Done.
-- **Phase B** (in progress): job queue, git branching, draft PR creation.
-  Walking skeleton (`enqueue_job` + worker loop, no model/git/PR yet) is
-  landed; see `MILESTONES.md` for the slice plan.
+- **Phase B** (nearly done): job queue, model handoff, git branch,
+  test gate, draft PR, status tools, and systemd packaging landed.
+  Remaining: B8, an end-to-end validation on a real target repo. See
+  `MILESTONES.md` for the slice plan.
 - **Phase C** (planned): standing task feed from GitHub issues.
 
 ## Requirements
@@ -91,26 +92,118 @@ or exploration. Keep those for the planner.
 Claude Code will call the tool, show you the returned diff, and apply
 it with its own `Edit` tool if correct.
 
-### `enqueue_job(spec, scope, repo_root) -> job id` (Phase B, in progress)
+### `enqueue_job(spec, scope, repo_root, base_branch?, test_cmd?, skip_tests?) -> job id`
 
-Fire-and-forget variant. Enqueues a transformation for a background worker
-to run; returns the job id immediately. Use this when the result doesn't
-need to be reviewed inline — e.g. a type-hint sweep that can come back as a
-draft PR during the next review window.
+Fire-and-forget variant. The background worker picks the job up, runs the
+transformation, applies the diff in an isolated worktree, runs the target
+repo's test command (default `uv run pytest -q`), and on green opens a
+GitHub draft PR assigned to you. Use this when the result doesn't need to
+be reviewed inline — e.g. a type-hint sweep that can come back as a draft
+PR during the next review window.
 
-Current slice (B1) proves the queue mechanic: jobs flow `pending → running
-→ done` on disk. Model handoff, git branching, and draft PR creation
-arrive in B2–B5 (see `MILESTONES.md`).
+- `base_branch` — branch to fork off, default `main`.
+- `test_cmd` — argv run inside the worktree between apply and commit;
+  non-zero exit routes the job to `jobs/failed/<id>/` with test output
+  in `log.txt`, no branch pushed.
+- `skip_tests` — bypass the test gate for intentional-behavior-change jobs.
 
-Run the worker:
+Pre-flight: if the target repo's working tree is dirty, the worker
+refuses with status `error:dirty_tree` — don't interfere with in-flight
+work there.
+
+Artifacts land per-job under `jobs/`:
+
+```
+jobs/done/<id>/
+    job.json       # the original record
+    diff.patch     # the model-produced diff
+    status.txt     # ok | model_declined | error:<msg>
+    branch.txt     # pushed branch name (ok)
+    pr_url.txt     # draft PR URL (ok)
+
+jobs/failed/<id>/
+    job.json
+    diff.patch     # the diff that didn't pass tests
+    status.txt     # tests_failed
+    log.txt        # combined stdout+stderr of the test command
+```
+
+### `get_job_status(job_id) -> dict`
+
+Look up a single job across `pending/running/done/failed`. Returns
+`{id, state, status, spec, created_at, diff, log, branch, pr_url}`.
+Artifact fields are empty strings while the job is pending/running.
+Raises if the id doesn't exist.
+
+### `list_jobs(state?) -> list[dict]`
+
+Enumerate jobs, newest first. Each entry: `{id, state, status,
+created_at, spec_summary}`. Optional `state` filter: one of `pending`,
+`running`, `done`, `failed`.
+
+## Running the worker
+
+The worker drives the queue — `enqueue_job` only writes a record to
+`jobs/pending/`. Nothing happens until a worker is running.
+
+### Development: foreground
 
 ```bash
 uv run python worker.py
 ```
 
-The worker polls `jobs/pending/`, moves each job through the four
-directories under `jobs/`, and logs via stdlib `logging`. Later milestones
-package it as a systemd user service.
+It polls `jobs/pending/`, moves each job through `running/` into
+`done/<id>/` or `failed/<id>/`, and logs via stdlib `logging`.
+Ctrl+C stops it cleanly.
+
+### Production: systemd user service
+
+The repo ships a unit at `systemd/rae-local-agent-worker.service`.
+Install with a symlink so a `git pull` on this repo also picks up unit
+changes:
+
+```bash
+# Optional: config file for env vars (same shape as the MCP `env` block).
+mkdir -p ~/.config/rae-local-agent
+cat > ~/.config/rae-local-agent/env <<'EOF'
+LOCAL_AGENT_OLLAMA_HOST=http://workhorse.lan:11434
+LOCAL_AGENT_MODEL=qwen2.5-coder:32b
+EOF
+
+# Symlink the unit into the user systemd dir.
+mkdir -p ~/.config/systemd/user
+ln -s ~/projects/rae-local-agent/systemd/rae-local-agent-worker.service \
+      ~/.config/systemd/user/rae-local-agent-worker.service
+
+systemctl --user daemon-reload
+systemctl --user enable --now rae-local-agent-worker
+```
+
+Verify it's healthy and tail logs:
+
+```bash
+systemctl --user status rae-local-agent-worker
+journalctl --user -u rae-local-agent-worker -f
+```
+
+If you cloned somewhere other than `~/projects/rae-local-agent`,
+override the paths with a drop-in rather than editing the unit:
+
+```bash
+systemctl --user edit rae-local-agent-worker
+# add:
+# [Service]
+# WorkingDirectory=/your/path/rae-local-agent
+# ExecStart=
+# ExecStart=/your/path/to/uv run python worker.py
+```
+
+After editing the unit or dropping in overrides:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart rae-local-agent-worker
+```
 
 ## Why the rewrite protocol (not the diff protocol)
 
