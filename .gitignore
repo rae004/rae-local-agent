@@ -10,5 +10,8 @@ wheels/
 .venv
 
 # Phase B job queue: directory shape is tracked (.gitkeep), job files are not.
+# `jobs/*/*.{json,tmp}` covers B1's flat record shape; `jobs/*/*/` covers
+# B2+'s per-job output dirs (jobs/done/<id>/{job.json,diff.patch,status.txt}).
 jobs/*/*.json
 jobs/*/*.tmp
+jobs/*/*/
