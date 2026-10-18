@@ -1,10 +1,23 @@
-"""Phase B worker (B5 — draft PR creation).
+"""Phase B worker (B5 — draft PR creation; B9 — group routing).
 
 Watches `jobs/pending/`, picks jobs up, runs the model handoff, applies
 the diff in an isolated worktree, runs the target repo's tests, pushes
-a `rae-local-agent/<job-id>` branch to origin, and opens a draft PR
-assigned to the authed user. Each move between queue directories is an
-atomic `os.rename`, so a crash leaves the job in exactly one state.
+the result to origin, and opens (or extends) a draft PR assigned to
+the authed user. Each move between queue directories is an atomic
+`os.rename`, so a crash leaves the job in exactly one state.
+
+Branch + PR routing depends on the record's `group_id`:
+
+- No `group_id` (default): branch is `rae-local-agent/<job-id>`, one
+  PR per job. The classic Phase B shape.
+- `group_id` set, no branch on origin yet: first job of a group.
+  Branches off `base_branch` as `rae-local-agent/<group_id>`, opens a
+  draft PR with this job's `title`/`body`.
+- `group_id` set, branch already on origin: later job of the group.
+  Bases the new commit on the existing branch, pushes, and surfaces
+  the already-open PR's URL. The PR title/body is NOT re-shaped — the
+  first job in a group shapes the review surface; later jobs are just
+  commits on it.
 
 Shape of a completed job after B5:
 
@@ -119,11 +132,26 @@ def _handle_job(record: dict, jid: str) -> tuple[str, str, str, str, str]:
         body = record.get("body") or spec
         commit_message = f"{title}\n\n{body}"
 
-        branch = f"{BRANCH_PREFIX}/{jid}"
+        # Group routing. If the caller passed a group_id and that
+        # branch already lives on origin, we're a later-in-group job:
+        # base the new commit on the existing branch, don't touch the
+        # PR title/body, and reuse the existing PR URL. Otherwise we're
+        # the first job (either ungrouped or opening the group), and
+        # the standard path applies.
+        group_id = record.get("group_id")
+        if group_id:
+            branch = f"{BRANCH_PREFIX}/{group_id}"
+            is_later_in_group = git_ops.branch_exists_on_origin(repo_root, branch)
+        else:
+            branch = f"{BRANCH_PREFIX}/{jid}"
+            is_later_in_group = False
+
+        base_for_branch = branch if is_later_in_group else record.get("base_branch", "main")
+
         try:
             git_ops.branch_and_push(
                 repo_root=repo_root,
-                base_branch=record.get("base_branch", "main"),
+                base_branch=base_for_branch,
                 new_branch=branch,
                 diff_text=diff,
                 commit_message=commit_message,
@@ -132,7 +160,15 @@ def _handle_job(record: dict, jid: str) -> tuple[str, str, str, str, str]:
         except git_ops.TestsFailedError as e:
             return diff, "tests_failed", "", e.log, ""
 
-        # Branch is on origin. Open the draft PR.
+        # Branch is on origin. If this is a later-in-group job the PR
+        # already exists — surface its URL. If gh can't find one
+        # (closed, deleted) fall through and open a fresh PR as a
+        # defensive recovery.
+        if is_later_in_group:
+            existing_pr = git_ops.pr_url_for_branch(repo_root, branch)
+            if existing_pr:
+                return diff, "ok", branch, "", existing_pr
+
         try:
             pr_url = git_ops.create_draft_pr(
                 repo_root=repo_root,

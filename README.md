@@ -19,8 +19,10 @@ a 32B coder can do locally.
 
 - **Phase A**: one tool, advisory, one-shot per file. Done.
 - **Phase B**: queue, model handoff, worktree, test gate, draft PR,
-  status tools, systemd packaging, and a documented first real run
-  against a real target repo. Done. See [First real run](#first-real-run).
+  status tools, systemd packaging, a documented first real run against
+  a real target repo, and
+  [grouping jobs into one PR](#grouping-jobs-into-one-pr) via a shared
+  `group_id`. Done. See [First real run](#first-real-run).
   See `MILESTONES.md` for the slice plan.
 - **Phase C** (planned): standing task feed from GitHub issues.
 
@@ -127,7 +129,7 @@ or exploration. Keep those for the planner.
 Claude Code will call the tool, show you the returned diff, and apply
 it with its own `Edit` tool if correct.
 
-### `enqueue_job(spec, scope, repo_root, base_branch?, test_cmd?, skip_tests?) -> job id`
+### `enqueue_job(spec, scope, repo_root, base_branch?, test_cmd?, skip_tests?, title?, body?, group_id?) -> job id`
 
 Fire-and-forget variant. The background worker picks the job up, runs the
 transformation, applies the diff in an isolated worktree, runs the target
@@ -141,10 +143,48 @@ PR during the next review window.
   non-zero exit routes the job to `jobs/failed/<id>/` with test output
   in `log.txt`, no branch pushed.
 - `skip_tests` — bypass the test gate for intentional-behavior-change jobs.
+- `title`, `body` — shape the commit subject and draft-PR fields
+  separately from `spec`. Omit → derived from the first line of `spec`
+  (truncated to 72 chars) and the full spec text respectively.
+- `group_id` — optional group handle (`^[a-z0-9][a-z0-9-]{0,62}$`). See
+  [Grouping jobs into one PR](#grouping-jobs-into-one-pr).
 
 Pre-flight: if the target repo's working tree is dirty, the worker
 refuses with status `error:dirty_tree` — don't interfere with in-flight
 work there.
+
+#### Grouping jobs into one PR
+
+Passing the same `group_id` across a batch of related jobs lands them
+as sequential commits on one `rae-local-agent/<group_id>` branch, with
+one draft PR covering the batch instead of one PR per file.
+
+The worker's routing per job:
+
+- No `group_id` set → classic Phase B shape: branch is
+  `rae-local-agent/<job-id>`, one PR per job.
+- `group_id` set, branch not on origin yet → **first job of the group**.
+  Branches off `base_branch`, opens the draft PR with this job's
+  `title`/`body`.
+- `group_id` set, branch already on origin → **later job of the group**.
+  Bases the new commit on the existing branch, pushes, and surfaces
+  the already-open PR's URL. The PR title/body is NOT re-shaped — the
+  first job in a group owns the review surface; later jobs are just
+  commits on it.
+
+The individual job's `title`/`body` still shape its commit — only the
+PR header is first-job-wins. Compose a `body` on the first job that
+reads as a "batch description" when you intend to grow it.
+
+Example: an N-file mechanical sweep, from one Claude Code session —
+
+> Enqueue three jobs for me on local-agent, same `group_id` of
+> `routes-sweep`:
+> - `backend/app/routes/bills.py`, title `chore(bills): …`
+> - `backend/app/routes/categories.py`, title `chore(categories): …`
+> - `backend/app/routes/spending.py`, title `chore(spending): …`
+
+Result: one draft PR named after the first job, three commits on it.
 
 Artifacts land per-job under `jobs/`:
 

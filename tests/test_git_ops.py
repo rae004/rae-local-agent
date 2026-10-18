@@ -533,3 +533,99 @@ def test_create_draft_pr_raises_gh_error_on_nonzero_exit(tmp_path, monkeypatch):
 
     with pytest.raises(git_ops.GhError, match="gh pr create failed.*not authenticated"):
         git_ops.create_draft_pr(repo_root=tmp_path, branch="x", title="t", body="b")
+
+
+# ---------- group routing probes (B9) -----------------------------------
+
+
+def test_branch_exists_on_origin_false_when_absent(repo_pair):
+    """No such branch on origin → False (ls-remote prints nothing)."""
+    repo, _ = repo_pair
+    assert git_ops.branch_exists_on_origin(repo, "rae-local-agent/nope") is False
+
+
+def test_branch_exists_on_origin_true_after_push(repo_pair):
+    """Push a branch, then the probe should see it."""
+    repo, _ = repo_pair
+    _run(["git", "checkout", "-q", "-b", "rae-local-agent/present"], repo)
+    _run(["git", "commit", "-q", "--allow-empty", "-m", "x"], repo)
+    _run(["git", "push", "-q", "-u", "origin", "rae-local-agent/present"], repo)
+    _run(["git", "checkout", "-q", "main"], repo)
+
+    assert git_ops.branch_exists_on_origin(repo, "rae-local-agent/present") is True
+    assert git_ops.branch_exists_on_origin(repo, "rae-local-agent/other") is False
+
+
+def test_branch_exists_on_origin_false_on_non_zero_exit(tmp_path, monkeypatch):
+    """A git ls-remote failure (no network, no origin) → False, no raise."""
+
+    def fake_run(cmd, cwd, capture_output, text):
+        return subprocess.CompletedProcess(cmd, 128, "", "fatal: ...")
+
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+    assert git_ops.branch_exists_on_origin(tmp_path, "x") is False
+
+
+def test_pr_url_for_branch_returns_url_on_success(tmp_path, monkeypatch):
+    """gh prints the PR URL to stdout → we return it stripped."""
+
+    def fake_run(cmd, cwd, capture_output, text):
+        assert cmd[:3] == ["gh", "pr", "view"]
+        return subprocess.CompletedProcess(cmd, 0, "https://github.com/u/r/pull/42\n", "")
+
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+    assert (
+        git_ops.pr_url_for_branch(tmp_path, "rae-local-agent/g") == "https://github.com/u/r/pull/42"
+    )
+
+
+def test_pr_url_for_branch_returns_none_on_no_pr(tmp_path, monkeypatch):
+    """gh returns non-zero when no PR is associated → None."""
+
+    def fake_run(cmd, cwd, capture_output, text):
+        return subprocess.CompletedProcess(cmd, 1, "", "no pull requests found\n")
+
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+    assert git_ops.pr_url_for_branch(tmp_path, "rae-local-agent/g") is None
+
+
+def test_pr_url_for_branch_returns_none_on_empty_stdout(tmp_path, monkeypatch):
+    """gh succeeded but printed nothing — treat as no PR."""
+
+    def fake_run(cmd, cwd, capture_output, text):
+        return subprocess.CompletedProcess(cmd, 0, "\n", "")
+
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+    assert git_ops.pr_url_for_branch(tmp_path, "rae-local-agent/g") is None
+
+
+def test_branch_and_push_appends_commit_to_existing_group_branch(repo_pair):
+    """Later-in-group path: new_branch == base_branch → stack a commit."""
+    repo, remote = repo_pair
+    # Seed origin with an existing group branch carrying one commit.
+    _run(["git", "checkout", "-q", "-b", "rae-local-agent/group-a"], repo)
+    (repo / "seed.py").write_text("# seed\n")
+    _run(["git", "add", "seed.py"], repo)
+    _run(["git", "commit", "-q", "-m", "seed"], repo)
+    _run(["git", "push", "-q", "-u", "origin", "rae-local-agent/group-a"], repo)
+    _run(["git", "checkout", "-q", "main"], repo)
+    _run(["git", "branch", "-D", "rae-local-agent/group-a"], repo)
+
+    # Add a second commit by basing off the group branch itself (what
+    # the worker does for a later-in-group job).
+    git_ops.branch_and_push(
+        repo_root=repo,
+        base_branch="rae-local-agent/group-a",  # same ref as new_branch
+        new_branch="rae-local-agent/group-a",
+        diff_text=_HELLO_DIFF,
+        commit_message="second in group",
+    )
+
+    # Fetch into a scratch clone and verify the branch now has two
+    # commits with `seed.py` still present (not clobbered by a reset).
+    scratch = repo.parent / "scratch"
+    _run(["git", "clone", "-q", "-b", "rae-local-agent/group-a", str(remote), str(scratch)], repo)
+    log = _run(["git", "log", "--format=%s", "-n", "5"], scratch).stdout.splitlines()
+    assert "second in group" in log
+    assert "seed" in log
+    assert (scratch / "seed.py").exists()  # earlier commit preserved
