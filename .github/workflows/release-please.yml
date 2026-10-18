@@ -16,6 +16,39 @@ jobs:
       # Dependabot bumps the SHA weekly; update the trailing version tag
       # in lockstep when it opens a PR.
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # release-please bumps pyproject.toml but doesn't know about uv.lock.
+      # CI runs `uv sync --locked`, so a stale lockfile breaks the release
+      # PR's checks. Regen the lockfile on the release PR's branch and push
+      # the result as the bot. Skipped when release-please didn't touch a PR.
+      - name: Checkout release PR branch
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ fromJson(steps.release.outputs.pr).headBranchName }}
+
+      - name: Install uv
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Set up Python
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        run: uv python install 3.12
+
+      - name: Sync uv.lock
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        run: |
+          uv lock
+          if git diff --quiet uv.lock; then
+            echo "uv.lock already in sync, nothing to push"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "chore: sync uv.lock to released version"
+          git push
