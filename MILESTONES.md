@@ -186,6 +186,11 @@ Claude Code session produces exactly one draft PR with one commit
 per job, and the status tool surfaces the shared PR URL for every
 job in the group.
 
+**Status: done.** First grouped run on rae-budget:
+[#242](https://github.com/rae004/rae-budget/pull/242) — three jobs
+(`data_management.py`, `pay_periods.py`, `spending.py`) sharing
+`group_id="rae-budget-routes"`, one draft PR with three commits.
+
 ---
 
 Beyond Phase B is Phase C: a standing feed of jobs sourced from GitHub

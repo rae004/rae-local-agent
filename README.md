@@ -30,9 +30,13 @@ a 32B coder can do locally.
 
 Phase B closeout was an end-to-end validation against
 [rae-budget](https://github.com/rae004/rae-budget): a mechanical sweep
-adding `-> ResponseReturnValue` to every Flask route handler. Three
-draft PRs, all enqueued from a Claude Code session, worker handled
-sequentially while the session moved on:
+adding `-> ResponseReturnValue` to every Flask route handler, done in
+three rounds.
+
+### Round 1 — one PR per file
+
+Three draft PRs, all enqueued from a Claude Code session, worker
+handled sequentially while the session moved on:
 
 - [rae-budget#236](https://github.com/rae004/rae-budget/pull/236) —
   `backend/app/routes/categories.py`. The first real run. Title was
@@ -48,6 +52,19 @@ sequentially while the session moved on:
   `backend/app/routes/bill_templates.py`. Peer to #237, enqueued in
   the same breath — exercises queue serialization against a real
   target.
+
+### Round 2 — three files, one PR
+
+Having three PRs for one conceptual sweep was clearly too much review
+surface. [#27](https://github.com/rae004/rae-local-agent/pull/27)
+added `group_id`; the first grouped run was:
+
+- [rae-budget#242](https://github.com/rae004/rae-budget/pull/242) —
+  `backend/app/routes/{data_management,pay_periods,spending}.py`.
+  Three jobs enqueued back-to-back with `group_id="rae-budget-routes"`.
+  First job opened the draft PR with a batch-level title; later jobs
+  stacked their file-scoped commits on the same branch. One PR, three
+  commits. End-to-end validation of [grouping](#grouping-jobs-into-one-pr).
 
 ### Historical note on #237 and #238
 
