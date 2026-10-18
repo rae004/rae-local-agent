@@ -190,3 +190,101 @@ def test_branch_and_push_raises_on_missing_base_branch(repo_pair):
             diff_text=_HELLO_DIFF,
             commit_message="s",
         )
+
+
+def test_branch_and_push_cleans_up_local_branch_ref(repo_pair):
+    """After a successful push the local <new_branch> ref should be gone."""
+    repo, _ = repo_pair
+    git_ops.branch_and_push(
+        repo_root=repo,
+        base_branch="main",
+        new_branch="rae-local-agent/test-cleanup",
+        diff_text=_HELLO_DIFF,
+        commit_message="s",
+    )
+    result = _run(["git", "branch", "--list", "rae-local-agent/test-cleanup"], repo)
+    assert result.stdout.strip() == ""
+
+
+# ---------- test gate (B4) ----------------------------------------------
+
+
+def test_branch_and_push_runs_test_cmd_and_pushes_on_zero_exit(repo_pair):
+    """A test_cmd that exits 0 lets the push proceed."""
+    repo, remote = repo_pair
+    git_ops.branch_and_push(
+        repo_root=repo,
+        base_branch="main",
+        new_branch="rae-local-agent/gate-pass",
+        diff_text=_HELLO_DIFF,
+        commit_message="s",
+        test_cmd=["true"],
+    )
+    result = _run(
+        ["git", "--git-dir", str(remote), "branch", "--list", "rae-local-agent/gate-pass"],
+        repo,
+    )
+    assert "rae-local-agent/gate-pass" in result.stdout
+
+
+def test_branch_and_push_raises_tests_failed_on_nonzero_exit(repo_pair):
+    """A test_cmd that exits non-zero → TestsFailedError, no push."""
+    repo, remote = repo_pair
+    with pytest.raises(git_ops.TestsFailedError):
+        git_ops.branch_and_push(
+            repo_root=repo,
+            base_branch="main",
+            new_branch="rae-local-agent/gate-fail",
+            diff_text=_HELLO_DIFF,
+            commit_message="s",
+            test_cmd=["false"],
+        )
+    # Nothing was pushed.
+    result = _run(
+        ["git", "--git-dir", str(remote), "branch", "--list", "rae-local-agent/gate-fail"],
+        repo,
+    )
+    assert result.stdout.strip() == ""
+    # Local branch ref also cleaned up.
+    local = _run(["git", "branch", "--list", "rae-local-agent/gate-fail"], repo)
+    assert local.stdout.strip() == ""
+
+
+def test_tests_failed_error_captures_test_output(repo_pair):
+    """TestsFailedError.log holds combined stdout+stderr of the test cmd."""
+    repo, _ = repo_pair
+    # Script writes to both stdout and stderr; order is preserved because
+    # branch_and_push merges stderr into stdout at the pipe level.
+    script = (
+        "python -c \"import sys; print('OUT_LINE'); "
+        "print('ERR_LINE', file=sys.stderr); sys.exit(2)\""
+    )
+    with pytest.raises(git_ops.TestsFailedError) as excinfo:
+        git_ops.branch_and_push(
+            repo_root=repo,
+            base_branch="main",
+            new_branch="rae-local-agent/gate-log",
+            diff_text=_HELLO_DIFF,
+            commit_message="s",
+            test_cmd=["sh", "-c", script],
+        )
+    assert "OUT_LINE" in excinfo.value.log
+    assert "ERR_LINE" in excinfo.value.log
+
+
+def test_test_cmd_runs_in_worktree_with_applied_diff(repo_pair):
+    """The test command sees the applied change, not the pristine checkout."""
+    repo, _ = repo_pair
+    # Test script asserts the diff landed: hello.py should contain `-> str`.
+    with pytest.raises(git_ops.TestsFailedError):
+        git_ops.branch_and_push(
+            repo_root=repo,
+            base_branch="main",
+            new_branch="rae-local-agent/gate-cwd",
+            diff_text=_HELLO_DIFF,
+            commit_message="s",
+            # grep -q returns 0 if found, 1 if not; invert with ! for failure
+            # when it IS found — this test wants to prove the diff is visible,
+            # so we expect the inverted grep to exit non-zero → TestsFailedError.
+            test_cmd=["sh", "-c", "! grep -q 'name) -> str' hello.py"],
+        )

@@ -37,6 +37,28 @@ def test_make_job_record_accepts_custom_base_branch(tmp_path: pathlib.Path) -> N
     assert rec["base_branch"] == "develop"
 
 
+def test_make_job_record_default_test_cmd_and_skip_tests(tmp_path: pathlib.Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rec = _make_job_record("do X", ["f.py"], str(repo))
+    assert rec["test_cmd"] == ["uv", "run", "pytest", "-q"]
+    assert rec["skip_tests"] is False
+
+
+def test_make_job_record_custom_test_cmd(tmp_path: pathlib.Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rec = _make_job_record("do X", ["f.py"], str(repo), test_cmd=["make", "test"])
+    assert rec["test_cmd"] == ["make", "test"]
+
+
+def test_make_job_record_skip_tests_override(tmp_path: pathlib.Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rec = _make_job_record("do X", ["f.py"], str(repo), skip_tests=True)
+    assert rec["skip_tests"] is True
+
+
 def test_make_job_record_rejects_missing_repo() -> None:
     with pytest.raises(ValueError, match="repo_root is not a directory"):
         _make_job_record("s", ["f"], "/this/path/does/not/exist")

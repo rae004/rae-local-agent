@@ -72,19 +72,39 @@ def done_job_dir(jid: str) -> Path:
     return done_dir() / jid
 
 
+def failed_job_dir(jid: str) -> Path:
+    """Per-job output directory inside failed/. B4+ test-gate failures land here."""
+    return failed_dir() / jid
+
+
+def _finalize_into(path: Path, dest_dir: Path) -> Path:
+    """Move a running job's record into its per-job output dir atomically."""
+    jid = path.stem
+    new = dest_dir / jid / "job.json"
+    path.rename(new)
+    return new
+
+
 def finalize_done(path: Path) -> Path:
     """Move a running job's record into its done/<id>/ output dir.
 
     The output dir is expected to already exist with any artifacts the
-    worker wrote (diff.patch, status.txt). This is the atomic step that
-    signals "job complete": until this rename lands, a crash leaves the
-    record in running/ and the next tick re-runs the job, overwriting
+    worker wrote (diff.patch, status.txt, …). This is the atomic step
+    that signals "job complete": until this rename lands, a crash leaves
+    the record in running/ and the next tick re-runs the job, overwriting
     partial artifacts.
     """
-    jid = path.stem
-    new = done_job_dir(jid) / "job.json"
-    path.rename(new)
-    return new
+    return _finalize_into(path, done_dir())
+
+
+def finalize_failed(path: Path) -> Path:
+    """Move a running job's record into its failed/<id>/ output dir.
+
+    Same atomic semantics as `finalize_done`; the output dir holds the
+    diff that would have been pushed plus a `log.txt` with the test
+    output. B4+ test-gate failures land here.
+    """
+    return _finalize_into(path, failed_dir())
 
 
 def iter_jobs(d: Path) -> list[Path]:
