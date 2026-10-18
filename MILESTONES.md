@@ -193,5 +193,131 @@ job in the group.
 
 ---
 
-Beyond Phase B is Phase C: a standing feed of jobs sourced from GitHub
-issues. Deliberately out of scope here.
+## Phase C — Standing feed from GitHub issues
+
+Phase C's point is autonomy: the agent picks up work when nobody is
+typing. See `PHASE_C_DESIGN.md` for the shape of the loop, the issue
+body format, the GitHub-label state model, and the decided-vs-rejected
+alternatives. This section slices that design into landable
+milestones.
+
+### C0 — Scaffold
+
+Lay down the directory shapes, config file reader, and systemd unit
+stub. No GitHub calls yet.
+
+- `issue_poller.py` — stub `main()` that logs "poller up" and exits
+- `systemd/rae-local-agent-issue-poller.service` — unit file in the
+  repo, same style as the worker's
+- Config loader for `~/.config/rae-local-agent/repos.yaml` with
+  validation (poll_interval, repos map, local-path existence check)
+- `pyyaml` added to `pyproject.toml` if it isn't already pulled in by
+  another dep
+
+**Done means:** running `uv run python issue_poller.py` with a valid
+config logs "poller up" and exits cleanly; with a missing or invalid
+config, exits non-zero with a clear error naming the offending field.
+
+### C1 — Polling loop (read-only)
+
+Minimum viable loop. Lists issues matching the filter and logs them.
+No state writes, no enqueues.
+
+- Poll loop that iterates `config.repos`, calls `gh issue list
+  --repo <r> --label local-agent` with `-label agent-queued -label
+  agent-invalid`, logs each issue id and title
+- Honors `poll_interval_seconds`; SIGINT/SIGTERM graceful shutdown
+  via the same `_StopFlag` idiom as the worker
+
+**Done means:** a human opens an issue with the `local-agent` label on
+a configured repo; within one poll interval the poller logs that
+issue. Opening a second one shows up on the next tick. Removing the
+label makes it stop showing up.
+
+### C2 — Issue body parser
+
+Turn the body into job params or raise `InvalidIssue`.
+
+- `parse_issue_body(body) -> dict` extracts YAML frontmatter and
+  returns a dict matching `enqueue_job`'s kwargs. The rest of the
+  body (dedented) becomes `spec`.
+- Validation at parse time: `scope` is non-empty list of strings,
+  `group_id` matches the Phase B regex if present, spec is non-empty,
+  no unknown top-level frontmatter keys.
+- Unit tests cover the happy path and every validation branch
+  explicitly.
+
+**Done means:** parse_issue_body produces a dict that round-trips
+through `_make_job_record` on a representative body, and raises
+`InvalidIssue` with a specific error on each failure mode. Still no
+GitHub writes.
+
+### C3 — Labels as state (write path for the enqueue side)
+
+Agent starts touching GitHub. The enqueue side of the loop goes live.
+
+- On a valid parse: `enqueue_job(**parsed, repo_root=…)`, post a
+  comment with the job id and the `rae-local-agent:job_id=…` HTML
+  tag, add label `agent-queued`.
+- On a parse error or an enqueue error: post a comment with the
+  error, add label `agent-invalid`. Still no label on a success case.
+
+**Done means:** labeling an issue `local-agent` on a configured repo
+results, within one poll interval, in: (a) a job appearing in
+`jobs/pending/` with the right fields, (b) an `agent-queued` label
+on the issue, (c) a comment naming the job id. Breaking the body
+intentionally (e.g. empty scope) results in `agent-invalid` + a
+pointed comment, no enqueue.
+
+### C4 — Completion comment-back
+
+Close the loop. Issues get a final comment with the result.
+
+- Second pass per tick over issues with `agent-queued -label
+  agent-complete`: extract the job_id from the HTML-tag in a prior
+  comment, call `get_job_status(job_id)`, and if `state in
+  ("done", "failed")`, post a terminal comment and add
+  `agent-complete`.
+- Comment shape per status (ok / tests_failed / model_declined /
+  error) as described in `PHASE_C_DESIGN.md` § "The comment-back on
+  completion".
+- An HTML tag on the completion comment prevents re-posting.
+
+**Done means:** an enqueued issue that reaches `done/ok` gets a
+single comment with the PR URL and the diff preview, and the
+`agent-complete` label. One for `done/model_declined`, one for
+`failed/tests_failed`. Removing `agent-complete` + `agent-queued`
+causes re-enqueue on the next tick (manual retry path).
+
+### C5 — Systemd packaging
+
+The poller becomes something you can `enable --now`.
+
+- Unit file ships in the repo at
+  `systemd/rae-local-agent-issue-poller.service`
+- README install snippet alongside the worker's: symlink the unit,
+  `daemon-reload`, `enable --now`
+- journald captures the logs; verify from a running service that
+  logs are structured enough to triage
+
+**Done means:** `systemctl --user status rae-local-agent-issue-poller`
+shows a healthy service running against a real `repos.yaml`;
+restarts survive reboot; the service doesn't interfere with the
+worker and vice-versa.
+
+### C6 — End-to-end validation on a real repo
+
+One real issue through the full pipeline, on a real repo.
+
+**Done means:** opening a `local-agent`-labeled issue on
+rae-time-tracker-and-invoice (or similar) results in a draft PR with
+a comment on the issue pointing at it, zero human intervention
+between opening the issue and the PR link landing on the issue.
+Documented in README under "First real issue-driven run" alongside
+the Phase B first-real-run section.
+
+---
+
+Beyond Phase C: Phase D (if there is one) might cover worker
+parallelism, cross-source adapters (Jira/Linear), or a scheduler for
+periodic batch sweeps. Deliberately out of scope here.

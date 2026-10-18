@@ -24,7 +24,10 @@ a 32B coder can do locally.
   [grouping jobs into one PR](#grouping-jobs-into-one-pr) via a shared
   `group_id`. Done. See [First real run](#first-real-run).
   See `MILESTONES.md` for the slice plan.
-- **Phase C** (planned): standing task feed from GitHub issues.
+- **Phase C** (designed, not implemented): standing task feed from
+  GitHub issues. See
+  [`PHASE_C_DESIGN.md`](./PHASE_C_DESIGN.md) and the Phase C section
+  of `MILESTONES.md`.
 
 ## First real run
 
