@@ -23,9 +23,24 @@ this module's seam.
 
 from __future__ import annotations
 
+import contextlib
+import os
 import subprocess
 import tempfile
 from pathlib import Path
+
+# The worker typically runs as a systemd user service with
+# `WorkingDirectory=~/projects/rae-local-agent`, so its process env has
+# `VIRTUAL_ENV` and friends pointing at rae-local-agent's own venv. When
+# the test subprocess inherits that env, `uv run pytest -q` from the
+# worktree resolves to rae-local-agent's venv (which doesn't have the
+# target repo's deps) instead of the target repo's own project.
+# These are the env vars we strip to force uv to re-resolve from cwd.
+_UV_ENV_VARS_TO_STRIP = ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR")
+
+# The venv dir name on the worker side; stripped from PATH entries so
+# uv doesn't pick up the worker's pytest even without `uv run`.
+_WORKER_VENV_FRAGMENT = "/rae-local-agent/.venv/bin"
 
 # Baked into every commit the worker makes. Avoids depending on the host's
 # `git config user.*` and makes authorship obvious in git log.
@@ -58,6 +73,48 @@ def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return result
 
 
+def _scrubbed_test_env() -> dict[str, str]:
+    """Build a subprocess env with the worker's uv context removed.
+
+    Lets `uv run pytest -q` in the worktree re-resolve the project from
+    cwd (the target repo's pyproject) instead of inheriting the worker's
+    `VIRTUAL_ENV` and short-circuiting to rae-local-agent's venv. Also
+    strips rae-local-agent's `.venv/bin` from PATH so a bare `pytest`
+    invocation doesn't pick up the worker's binary either.
+    """
+    env = os.environ.copy()
+    for k in _UV_ENV_VARS_TO_STRIP:
+        env.pop(k, None)
+    path = env.get("PATH", "")
+    env["PATH"] = ":".join(p for p in path.split(":") if _WORKER_VENV_FRAGMENT not in p)
+    return env
+
+
+def _link_target_venv(repo_root: Path, wt: Path) -> None:
+    """Reuse the target repo's venv in the worktree so uv doesn't rebuild.
+
+    `git worktree add` doesn't copy `.venv`, so `uv run` in the worktree
+    would otherwise build a fresh venv from scratch per job — correct,
+    but slow (dependency resolution + install on every mechanical sweep).
+    Symlinking the target repo's existing venv in makes the test gate
+    reuse what's already there.
+
+    Stale when the diff changes `pyproject.toml` or `uv.lock`, which the
+    gate catches honestly (import errors on new deps, or old deps gone).
+    No-op when the target has no `.venv` yet or the symlink already exists.
+    """
+    venv_src = repo_root / ".venv"
+    if not venv_src.is_dir():
+        return
+    link = wt / ".venv"
+    if link.exists() or link.is_symlink():
+        return
+    # Non-fatal: without the link, uv will build its own venv. Slower but
+    # still correct, so swallow and let the gate run.
+    with contextlib.suppress(OSError):
+        link.symlink_to(venv_src, target_is_directory=True)
+
+
 def is_clean(repo_root: Path) -> bool:
     """True iff `git status --porcelain` is empty in repo_root."""
     result = _run(["git", "status", "--porcelain"], cwd=repo_root)
@@ -80,6 +137,13 @@ def branch_and_push(
     a non-zero exit raises `TestsFailedError` with the combined output
     as `.log` and nothing is pushed. On pass, add+commit with a baked-
     in author, push `-u origin <new_branch>`.
+
+    Test subprocess env: the worker's `VIRTUAL_ENV`/`UV_PROJECT_ENVIRONMENT`
+    and rae-local-agent's `.venv/bin` on PATH are stripped so `uv run`
+    resolves the project from the worktree (the target repo), not from
+    the worker's own venv. The target repo's existing `.venv` is
+    symlinked into the worktree so uv reuses it instead of building a
+    fresh one every job. See `_scrubbed_test_env` + `_link_target_venv`.
 
     The user's active checkout in `repo_root` is not touched. The
     worktree and the local `<new_branch>` ref are both cleaned up on
@@ -111,9 +175,11 @@ def branch_and_push(
             patch.unlink()
 
             if test_cmd is not None:
+                _link_target_venv(repo_root, wt)
                 tr = subprocess.run(
                     test_cmd,
                     cwd=wt,
+                    env=_scrubbed_test_env(),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
