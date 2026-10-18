@@ -300,16 +300,17 @@ systemctl --user daemon-reload
 systemctl --user restart rae-local-agent-worker
 ```
 
-### Phase C issue poller (scaffold only)
+### Phase C issue poller (read-only loop)
 
 The repo also ships `systemd/rae-local-agent-issue-poller.service`.
-C0 wires the entry point only — it loads
-`~/.config/rae-local-agent/repos.yaml`, logs that the poller is up,
-and exits. There's no polling loop yet (C1); don't `enable --now`
-until the slice that adds one lands.
+As of C1 it's a real long-running loop: every `poll_interval_seconds`
+it lists open issues on each configured repo whose labels match
+`label:local-agent -label:agent-queued -label:agent-invalid` and logs
+one line per issue. **No enqueueing yet, no labels or comments
+written** — that's C2 (parser) and C3 (enqueue).
 
-Format of `repos.yaml` is documented in `PHASE_C_DESIGN.md` §
-"Configuration". Minimal example:
+Config at `~/.config/rae-local-agent/repos.yaml` — format in
+`PHASE_C_DESIGN.md` § "Configuration". Minimal example:
 
 ```yaml
 poll_interval_seconds: 300  # optional, default 300
@@ -317,15 +318,26 @@ repos:
   rae004/rae-budget: /home/rae004/projects/rae-budget
 ```
 
-Dry-run the scaffold against a config:
+Dry-run against a config:
 
 ```bash
 uv run python issue_poller.py
 ```
 
-A valid config logs `poller up with N repo(s), poll_interval=Ns` and
-exits zero. A missing or invalid config exits non-zero with an error
-line naming the offending field.
+A valid config logs `poller up with N repo(s), poll_interval=Ns`,
+runs ticks until SIGINT/SIGTERM, then exits zero. A missing or invalid
+config exits non-zero with an error line naming the offending field.
+A per-repo `gh` failure (auth, network) logs a `skipping <repo> this
+tick` warning and the loop keeps running — one bad repo doesn't take
+down the others.
+
+Enable alongside the worker:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now rae-local-agent-issue-poller
+journalctl --user -u rae-local-agent-issue-poller -f
+```
 
 ## Why the rewrite protocol (not the diff protocol)
 

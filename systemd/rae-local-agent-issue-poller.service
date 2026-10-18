@@ -11,12 +11,12 @@
 #   ExecStart         — assumes uv is installed per-user at
 #                       ~/.local/bin/uv (the astral installer's default).
 #
-# C0 scope: this unit runs the stub main that validates
-# ~/.config/rae-local-agent/repos.yaml and exits. Not a long-running
-# service yet; use `systemctl --user start` to drive it on-demand and
-# read the journald output. C1 wires in the polling loop and the
-# `Restart=on-failure` policy is where it needs to be for a real
-# service.
+# As of C1, this is a real long-running service: the loop lists issues
+# matching `label:local-agent -label:agent-queued -label:agent-invalid`
+# on each repo in ~/.config/rae-local-agent/repos.yaml every
+# `poll_interval_seconds`, logging what it saw. SIGINT/SIGTERM
+# (`systemctl --user stop`) is a clean exit; crashes are retried per
+# `Restart=on-failure`. C2 adds body parsing; C3 wires in enqueue.
 
 [Unit]
 Description=rae-local-agent GitHub issue poller
