@@ -135,6 +135,28 @@ another target) results in a draft PR with a passing test suite, zero
 human intervention between `enqueue_job` and the PR URL landing in
 `get_job_status`.
 
+**Status: done**, with one honest caveat. Three draft PRs on
+[rae-budget](https://github.com/rae004/rae-budget):
+
+- [#236](https://github.com/rae004/rae-budget/pull/236): first real
+  run on `categories.py`. The verbose PR title prompted the
+  `title`/`body` override feature
+  ([rae-local-agent#20](https://github.com/rae004/rae-local-agent/pull/20)).
+- [#237](https://github.com/rae004/rae-budget/pull/237): `bills.py`,
+  shaped with the new title/body params.
+- [#238](https://github.com/rae004/rae-budget/pull/238):
+  `bill_templates.py`, peer to #237.
+
+#237 and #238 shipped with `skip_tests=true` because the test gate
+runs under rae-local-agent's venv instead of the target repo's —
+tracked in
+[#22](https://github.com/rae004/rae-local-agent/issues/22). The
+diffs are pure annotations and were reviewed by hand before merge.
+Fixing #22 is a Phase C prerequisite.
+
+See the "First real run" section of the README for the readable
+version.
+
 ---
 
 Beyond Phase B is Phase C: a standing feed of jobs sourced from GitHub
