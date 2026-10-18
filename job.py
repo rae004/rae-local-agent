@@ -67,6 +67,26 @@ def move(path: Path, dest_dir: Path) -> Path:
     return new
 
 
+def done_job_dir(jid: str) -> Path:
+    """Per-job output directory inside done/. B2+ artifacts land here."""
+    return done_dir() / jid
+
+
+def finalize_done(path: Path) -> Path:
+    """Move a running job's record into its done/<id>/ output dir.
+
+    The output dir is expected to already exist with any artifacts the
+    worker wrote (diff.patch, status.txt). This is the atomic step that
+    signals "job complete": until this rename lands, a crash leaves the
+    record in running/ and the next tick re-runs the job, overwriting
+    partial artifacts.
+    """
+    jid = path.stem
+    new = done_job_dir(jid) / "job.json"
+    path.rename(new)
+    return new
+
+
 def iter_jobs(d: Path) -> list[Path]:
     """Job files in a queue dir, sorted by name (= creation order for ms ids)."""
     return sorted(p for p in d.iterdir() if p.suffix == ".json")
