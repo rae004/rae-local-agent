@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/rae004/rae-local-agent/compare/v0.7.0...v0.8.0) (2026-10-18)
+
+
+### Features
+
+* title/body overrides on enqueue_job for shaped PRs ([#20](https://github.com/rae004/rae-local-agent/issues/20)) ([7fb8b84](https://github.com/rae004/rae-local-agent/commit/7fb8b8426683e598687c55e0494d0ee1f31f01f4))
+
 ## [0.7.0](https://github.com/rae004/rae-local-agent/compare/v0.6.0...v0.7.0) (2026-10-18)
 
 
