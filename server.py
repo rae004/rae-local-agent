@@ -103,6 +103,8 @@ def _make_job_record(
     base_branch: str = "main",
     test_cmd: list[str] | None = None,
     skip_tests: bool = False,
+    title: str | None = None,
+    body: str | None = None,
 ) -> dict:
     """Build the on-disk job record. Raises if repo_root is not a directory."""
     root = Path(repo_root).resolve()
@@ -117,6 +119,8 @@ def _make_job_record(
         "base_branch": base_branch,
         "test_cmd": test_cmd if test_cmd is not None else list(DEFAULT_TEST_CMD),
         "skip_tests": skip_tests,
+        "title": title,
+        "body": body,
     }
 
 
@@ -174,6 +178,28 @@ async def enqueue_job(
             )
         ),
     ] = False,
+    title: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Short, conventional-commits-shaped subject (e.g. "
+                "`chore: add return type hints`). Used verbatim as the "
+                "commit subject AND the draft-PR title. Omit to derive one "
+                "from the first line of `spec`, truncated to 72 chars."
+            )
+        ),
+    ] = None,
+    body: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Longer description for the commit body AND the draft-PR "
+                "body. Omit to use the full `spec` text. Supply when you "
+                "want reviewer-facing context separate from the mechanical "
+                "directive the model follows."
+            )
+        ),
+    ] = None,
 ) -> str:
     """Enqueue a code-transformation job for the background worker.
 
@@ -184,9 +210,20 @@ async def enqueue_job(
     Use this instead of `apply_transformation` when the result doesn't need
     to be reviewed inline — e.g. a type-hint sweep that can wait for a draft
     PR, or a multi-file rename to come back during the next review window.
+
+    `spec` is the directive the local model follows literally; prefer dense,
+    unambiguous phrasing. `title` and `body` shape the PR and commit for a
+    human reviewer and are what you tune for readability.
     """
     record = _make_job_record(
-        spec, scope, repo_root, base_branch, test_cmd=test_cmd, skip_tests=skip_tests
+        spec,
+        scope,
+        repo_root,
+        base_branch,
+        test_cmd=test_cmd,
+        skip_tests=skip_tests,
+        title=title,
+        body=body,
     )
     return job.write_pending(record)
 

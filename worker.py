@@ -114,6 +114,11 @@ def _handle_job(record: dict, jid: str) -> tuple[str, str, str, str, str]:
         if not diff:
             return "", "model_declined", "", "", ""
 
+        spec = record["spec"]
+        title = record.get("title") or git_ops._summarize(spec)
+        body = record.get("body") or spec
+        commit_message = f"{title}\n\n{body}"
+
         branch = f"{BRANCH_PREFIX}/{jid}"
         try:
             git_ops.branch_and_push(
@@ -121,7 +126,7 @@ def _handle_job(record: dict, jid: str) -> tuple[str, str, str, str, str]:
                 base_branch=record.get("base_branch", "main"),
                 new_branch=branch,
                 diff_text=diff,
-                commit_message=record["spec"],
+                commit_message=commit_message,
                 test_cmd=_test_cmd_for(record),
             )
         except git_ops.TestsFailedError as e:
@@ -132,7 +137,8 @@ def _handle_job(record: dict, jid: str) -> tuple[str, str, str, str, str]:
             pr_url = git_ops.create_draft_pr(
                 repo_root=repo_root,
                 branch=branch,
-                spec=record["spec"],
+                title=title,
+                body=body,
             )
         except Exception as e:
             # Push succeeded but gh failed — keep branch so the user can
