@@ -99,3 +99,109 @@ def test_finalize_failed_moves_record_into_failed_output_dir(jobs_root):
     assert new.read_text() == '{"id":"y"}'
     assert not src.exists()
     assert (out / "log.txt").read_text() == "tests failed"
+
+
+# ---------- B6 read-side helpers ----------------------------------------
+
+
+def _write_record(path, record):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record))
+
+
+def test_find_record_in_pending(jobs_root):
+    rec = {"id": "p1", "spec": "s", "created_at": "2026-10-18T00:00:00Z"}
+    _write_record(jobs_root / "pending" / "p1.json", rec)
+    found = job.find_record("p1")
+    assert found == ("pending", rec)
+
+
+def test_find_record_in_running(jobs_root):
+    rec = {"id": "r1", "spec": "s", "created_at": "2026-10-18T00:00:00Z"}
+    _write_record(jobs_root / "running" / "r1.json", rec)
+    found = job.find_record("r1")
+    assert found == ("running", rec)
+
+
+def test_find_record_in_done(jobs_root):
+    rec = {"id": "d1", "spec": "s", "created_at": "2026-10-18T00:00:00Z"}
+    _write_record(jobs_root / "done" / "d1" / "job.json", rec)
+    found = job.find_record("d1")
+    assert found == ("done", rec)
+
+
+def test_find_record_in_failed(jobs_root):
+    rec = {"id": "f1", "spec": "s", "created_at": "2026-10-18T00:00:00Z"}
+    _write_record(jobs_root / "failed" / "f1" / "job.json", rec)
+    found = job.find_record("f1")
+    assert found == ("failed", rec)
+
+
+def test_find_record_not_found_returns_none(jobs_root):
+    assert job.find_record("nope") is None
+
+
+def test_read_artifact_returns_content_when_present(jobs_root):
+    (jobs_root / "done" / "x").mkdir()
+    (jobs_root / "done" / "x" / "diff.patch").write_text("DIFF")
+    assert job.read_artifact("x", "done", "diff.patch") == "DIFF"
+
+
+def test_read_artifact_returns_empty_when_file_missing(jobs_root):
+    (jobs_root / "done" / "y").mkdir()
+    assert job.read_artifact("y", "done", "diff.patch") == ""
+
+
+def test_read_artifact_returns_empty_for_pending_or_running(jobs_root):
+    """Pending/running jobs have no output dir yet; read_artifact is a no-op."""
+    assert job.read_artifact("whatever", "pending", "diff.patch") == ""
+    assert job.read_artifact("whatever", "running", "diff.patch") == ""
+
+
+def test_list_records_across_all_dirs(jobs_root):
+    _write_record(
+        jobs_root / "pending" / "a.json",
+        {"id": "a", "spec": "s", "created_at": "2026-10-18T01:00:00Z"},
+    )
+    _write_record(
+        jobs_root / "running" / "b.json",
+        {"id": "b", "spec": "s", "created_at": "2026-10-18T02:00:00Z"},
+    )
+    _write_record(
+        jobs_root / "done" / "c" / "job.json",
+        {"id": "c", "spec": "s", "created_at": "2026-10-18T03:00:00Z"},
+    )
+    _write_record(
+        jobs_root / "failed" / "d" / "job.json",
+        {"id": "d", "spec": "s", "created_at": "2026-10-18T04:00:00Z"},
+    )
+    results = job.list_records()
+    ids_states = [(s, r["id"]) for s, r in results]
+    assert ("pending", "a") in ids_states
+    assert ("running", "b") in ids_states
+    assert ("done", "c") in ids_states
+    assert ("failed", "d") in ids_states
+    assert len(results) == 4
+
+
+def test_list_records_filters_by_state(jobs_root):
+    _write_record(jobs_root / "pending" / "a.json", {"id": "a", "spec": "s", "created_at": "t"})
+    _write_record(
+        jobs_root / "done" / "c" / "job.json", {"id": "c", "spec": "s", "created_at": "t"}
+    )
+    results = job.list_records(state="done")
+    assert [r["id"] for _, r in results] == ["c"]
+
+
+def test_list_records_rejects_unknown_state(jobs_root):
+    with pytest.raises(ValueError, match="unknown state"):
+        job.list_records(state="archived")
+
+
+def test_list_records_skips_dirs_without_job_json(jobs_root):
+    """A directory under done/ that lacks job.json (crash mid-finalize)
+    should not blow up list_records — it's just absent from the listing."""
+    (jobs_root / "done" / "stray").mkdir()
+    (jobs_root / "done" / "stray" / "diff.patch").write_text("...")
+    results = job.list_records(state="done")
+    assert results == []
