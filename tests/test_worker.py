@@ -25,9 +25,10 @@ def jobs_root(tmp_path, monkeypatch):
     for sub in ("pending", "running", "done", "failed"):
         (tmp_path / sub).mkdir()
     monkeypatch.setattr(job, "JOBS_ROOT", tmp_path)
-    # Stub git by default — the queue+model tests don't exercise it.
+    # Stub git + gh by default — the queue+model tests don't exercise them.
     monkeypatch.setattr(git_ops, "is_clean", lambda _repo_root: True)
     monkeypatch.setattr(git_ops, "branch_and_push", lambda **_: None)
+    monkeypatch.setattr(git_ops, "create_draft_pr", lambda **_: "https://example/pull/stub")
     return tmp_path
 
 
@@ -307,3 +308,64 @@ def test_process_passes_default_test_cmd_when_skip_tests_false(jobs_root, monkey
     worker.tick()
 
     assert seen["test_cmd"] == ["uv", "run", "pytest", "-q"]
+
+
+# ---------- B5 draft PR creation ----------------------------------------
+
+
+def test_process_writes_pr_url_on_successful_pr(jobs_root, monkeypatch):
+    """On `ok`, pr_url.txt holds the URL returned by create_draft_pr."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
+    _stub_transformation(monkeypatch, result=canned)
+    monkeypatch.setattr(
+        git_ops,
+        "create_draft_pr",
+        lambda **_: "https://github.com/u/r/pull/7",
+    )
+    _write_pending(jobs_root, "job-pr-ok")
+    worker.tick()
+
+    out = jobs_root / "done" / "job-pr-ok"
+    assert (out / "status.txt").read_text() == "ok\n"
+    assert (out / "branch.txt").read_text() == "rae-local-agent/job-pr-ok\n"
+    assert (out / "pr_url.txt").read_text() == "https://github.com/u/r/pull/7\n"
+
+
+def test_process_passes_record_fields_through_to_create_draft_pr(jobs_root, monkeypatch):
+    """repo_root, branch, and spec reach create_draft_pr."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
+    _stub_transformation(monkeypatch, result=canned)
+    seen: dict = {}
+
+    def fake_pr(**kw):
+        seen.update(kw)
+        return "https://example/pr"
+
+    monkeypatch.setattr(git_ops, "create_draft_pr", fake_pr)
+    _write_pending(jobs_root, "job-pr-fields", spec="rename foo", repo_root=str(jobs_root))
+    worker.tick()
+
+    assert str(seen["repo_root"]) == str(jobs_root)
+    assert seen["branch"] == "rae-local-agent/job-pr-fields"
+    assert seen["spec"] == "rename foo"
+
+
+def test_process_errors_but_preserves_branch_when_pr_fails_after_push(jobs_root, monkeypatch):
+    """gh fails after branch is pushed → status=error, branch.txt retained, no pr_url.txt."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
+    _stub_transformation(monkeypatch, result=canned)
+
+    def boom(**_):
+        raise git_ops.GhError("gh pr create failed: not authenticated")
+
+    monkeypatch.setattr(git_ops, "create_draft_pr", boom)
+    _write_pending(jobs_root, "job-pr-fail")
+    worker.tick()
+
+    out = jobs_root / "done" / "job-pr-fail"
+    status = (out / "status.txt").read_text()
+    assert status.startswith("error:GhError:")
+    assert "not authenticated" in status
+    # Branch IS pushed, so branch.txt is retained for manual-PR recovery.
+    assert (out / "branch.txt").read_text() == "rae-local-agent/job-pr-fail\n"
+    assert not (out / "pr_url.txt").exists()
