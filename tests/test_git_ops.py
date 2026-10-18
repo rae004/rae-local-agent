@@ -305,6 +305,34 @@ def test_summarize_falls_back_when_spec_is_blank():
     assert git_ops._summarize("   \n\n   ") == "rae-local-agent transformation"
 
 
+def test_summarize_passes_through_short_lines_unchanged():
+    """A line at exactly MAX_TITLE_LEN is returned verbatim."""
+    s = "x" * git_ops.MAX_TITLE_LEN
+    assert git_ops._summarize(s) == s
+
+
+def test_summarize_truncates_long_line_at_word_boundary_with_ellipsis():
+    long = (
+        "Add a return type annotation `-> ResponseReturnValue` to every function "
+        "in this file decorated with the categories blueprint route."
+    )
+    out = git_ops._summarize(long)
+    assert len(out) <= git_ops.MAX_TITLE_LEN
+    assert out.endswith("…")
+    # The remainder before the ellipsis is a whole-word prefix of the input.
+    assert long.startswith(out[:-1])
+    assert not out[:-1].endswith(" ")  # no trailing space before the ellipsis
+
+
+def test_summarize_hard_cuts_when_no_space_in_window():
+    """A long token with no spaces falls back to a hard cut + ellipsis."""
+    s = "a" * (git_ops.MAX_TITLE_LEN + 20)
+    out = git_ops._summarize(s)
+    assert len(out) == git_ops.MAX_TITLE_LEN
+    assert out.endswith("…")
+    assert out[:-1] == "a" * (git_ops.MAX_TITLE_LEN - 1)
+
+
 def test_create_draft_pr_invokes_gh_with_expected_args(tmp_path, monkeypatch):
     """gh pr create is invoked with --draft, --head, --title, --body, --assignee."""
     calls: list[tuple] = []
@@ -318,7 +346,8 @@ def test_create_draft_pr_invokes_gh_with_expected_args(tmp_path, monkeypatch):
     url = git_ops.create_draft_pr(
         repo_root=tmp_path,
         branch="rae-local-agent/abc",
-        spec="add type hints to foo and bar",
+        title="chore: add type hints to foo",
+        body="longer context paragraph",
     )
 
     assert url == "https://github.com/x/y/pull/42"
@@ -327,14 +356,14 @@ def test_create_draft_pr_invokes_gh_with_expected_args(tmp_path, monkeypatch):
     assert cmd[:3] == ["gh", "pr", "create"]
     assert "--draft" in cmd
     assert cmd[cmd.index("--head") + 1] == "rae-local-agent/abc"
-    assert cmd[cmd.index("--title") + 1] == "add type hints to foo and bar"
-    assert cmd[cmd.index("--body") + 1] == "add type hints to foo and bar"
+    assert cmd[cmd.index("--title") + 1] == "chore: add type hints to foo"
+    assert cmd[cmd.index("--body") + 1] == "longer context paragraph"
     assert cmd[cmd.index("--assignee") + 1] == "@me"
     assert cwd == tmp_path
 
 
-def test_create_draft_pr_title_is_first_line_of_multiline_spec(tmp_path, monkeypatch):
-    """Multiline spec → title is first line, body is the whole spec."""
+def test_create_draft_pr_uses_title_and_body_verbatim(tmp_path, monkeypatch):
+    """create_draft_pr does no summarization — caller is authoritative."""
     captured = {}
 
     def fake_run(cmd, cwd, capture_output, text):
@@ -343,12 +372,17 @@ def test_create_draft_pr_title_is_first_line_of_multiline_spec(tmp_path, monkeyp
 
     monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
 
-    spec = "rename greet to say_hello\n\nalso update all call sites across the repo"
-    git_ops.create_draft_pr(repo_root=tmp_path, branch="rae-local-agent/x", spec=spec)
+    body = "rename greet to say_hello\n\nalso update all call sites across the repo"
+    git_ops.create_draft_pr(
+        repo_root=tmp_path,
+        branch="rae-local-agent/x",
+        title="refactor: rename greet to say_hello",
+        body=body,
+    )
 
     cmd = captured["cmd"]
-    assert cmd[cmd.index("--title") + 1] == "rename greet to say_hello"
-    assert cmd[cmd.index("--body") + 1] == spec
+    assert cmd[cmd.index("--title") + 1] == "refactor: rename greet to say_hello"
+    assert cmd[cmd.index("--body") + 1] == body
 
 
 def test_create_draft_pr_raises_gh_error_on_nonzero_exit(tmp_path, monkeypatch):
@@ -360,4 +394,4 @@ def test_create_draft_pr_raises_gh_error_on_nonzero_exit(tmp_path, monkeypatch):
     monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
 
     with pytest.raises(git_ops.GhError, match="gh pr create failed.*not authenticated"):
-        git_ops.create_draft_pr(repo_root=tmp_path, branch="x", spec="s")
+        git_ops.create_draft_pr(repo_root=tmp_path, branch="x", title="t", body="b")

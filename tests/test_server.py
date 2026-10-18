@@ -61,6 +61,30 @@ def test_make_job_record_skip_tests_override(tmp_path: pathlib.Path) -> None:
     assert rec["skip_tests"] is True
 
 
+def test_make_job_record_title_and_body_default_to_none(tmp_path: pathlib.Path) -> None:
+    """Omitted title/body are stored as None — the worker falls back from the spec."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rec = _make_job_record("do X", ["f.py"], str(repo))
+    assert rec["title"] is None
+    assert rec["body"] is None
+
+
+def test_make_job_record_title_and_body_overrides_pass_through(tmp_path: pathlib.Path) -> None:
+    """Explicit title/body are stored verbatim for the worker to pick up."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rec = _make_job_record(
+        "do X",
+        ["f.py"],
+        str(repo),
+        title="feat: do X",
+        body="Reviewer-facing context.",
+    )
+    assert rec["title"] == "feat: do X"
+    assert rec["body"] == "Reviewer-facing context."
+
+
 # ---------- B6 status tools ---------------------------------------------
 #
 # The MCP tool decorators wrap the inner coroutine. We call them via

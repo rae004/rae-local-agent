@@ -40,6 +40,8 @@ def _write_pending(
     repo_root=None,
     skip_tests: bool = False,
     test_cmd=None,
+    title: str | None = None,
+    body: str | None = None,
 ):
     """Drop a well-formed job record into pending/."""
     rec = {
@@ -50,6 +52,8 @@ def _write_pending(
         "base_branch": "main",
         "test_cmd": test_cmd if test_cmd is not None else ["uv", "run", "pytest", "-q"],
         "skip_tests": skip_tests,
+        "title": title,
+        "body": body,
     }
     (jobs_root / "pending" / f"{jid}.json").write_text(json.dumps(rec))
     return rec
@@ -215,7 +219,8 @@ def test_process_passes_record_fields_through_to_git_ops(jobs_root, monkeypatch)
     assert seen["base_branch"] == "main"
     assert str(seen["repo_root"]) == str(jobs_root)
     assert seen["new_branch"] == "rae-local-agent/job-fields"
-    assert seen["commit_message"] == "rename foo"
+    # No explicit title/body on the record → both fall back to the spec.
+    assert seen["commit_message"] == "rename foo\n\nrename foo"
     assert seen["diff_text"] == canned
     assert seen["test_cmd"] == ["make", "test"]
 
@@ -332,7 +337,7 @@ def test_process_writes_pr_url_on_successful_pr(jobs_root, monkeypatch):
 
 
 def test_process_passes_record_fields_through_to_create_draft_pr(jobs_root, monkeypatch):
-    """repo_root, branch, and spec reach create_draft_pr."""
+    """repo_root, branch, title, body reach create_draft_pr."""
     canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
     _stub_transformation(monkeypatch, result=canned)
     seen: dict = {}
@@ -347,7 +352,74 @@ def test_process_passes_record_fields_through_to_create_draft_pr(jobs_root, monk
 
     assert str(seen["repo_root"]) == str(jobs_root)
     assert seen["branch"] == "rae-local-agent/job-pr-fields"
-    assert seen["spec"] == "rename foo"
+    # No explicit title/body on the record → fall back to the spec.
+    assert seen["title"] == "rename foo"
+    assert seen["body"] == "rename foo"
+
+
+# ---------- Title/body overrides on the enqueue surface -------------------
+
+
+def test_process_forwards_explicit_title_and_body_verbatim(jobs_root, monkeypatch):
+    """Caller-supplied title/body reach create_draft_pr unmodified."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
+    _stub_transformation(monkeypatch, result=canned)
+    pr_seen: dict = {}
+    push_seen: dict = {}
+    monkeypatch.setattr(git_ops, "branch_and_push", lambda **kw: push_seen.update(kw))
+    monkeypatch.setattr(
+        git_ops,
+        "create_draft_pr",
+        lambda **kw: pr_seen.update(kw) or "https://example/pr",
+    )
+
+    long_spec = (
+        "Add a return type annotation `-> ResponseReturnValue` to every "
+        "function in this file decorated with the blueprint route."
+    )
+    _write_pending(
+        jobs_root,
+        "job-explicit",
+        spec=long_spec,
+        title="feat: annotate route return types",
+        body="Context paragraph for the reviewer.",
+    )
+    worker.tick()
+
+    assert pr_seen["title"] == "feat: annotate route return types"
+    assert pr_seen["body"] == "Context paragraph for the reviewer."
+    assert (
+        push_seen["commit_message"]
+        == "feat: annotate route return types\n\nContext paragraph for the reviewer."
+    )
+
+
+def test_process_falls_back_to_derived_title_and_full_spec_body(jobs_root, monkeypatch):
+    """Omitted title/body: title summarizes the spec (truncated), body is the full spec."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
+    _stub_transformation(monkeypatch, result=canned)
+    pr_seen: dict = {}
+    push_seen: dict = {}
+    monkeypatch.setattr(git_ops, "branch_and_push", lambda **kw: push_seen.update(kw))
+    monkeypatch.setattr(
+        git_ops,
+        "create_draft_pr",
+        lambda **kw: pr_seen.update(kw) or "https://example/pr",
+    )
+
+    long_spec = (
+        "Add a return type annotation `-> ResponseReturnValue` to every "
+        "function in this file decorated with the blueprint route."
+    )
+    _write_pending(jobs_root, "job-fallback", spec=long_spec)
+    worker.tick()
+
+    # Title is truncated at the module cap, body is the untouched spec.
+    assert pr_seen["title"] == git_ops._summarize(long_spec)
+    assert len(pr_seen["title"]) <= git_ops.MAX_TITLE_LEN
+    assert pr_seen["title"].endswith("…")
+    assert pr_seen["body"] == long_spec
+    assert push_seen["commit_message"] == f"{pr_seen['title']}\n\n{long_spec}"
 
 
 def test_process_errors_but_preserves_branch_when_pr_fails_after_push(jobs_root, monkeypatch):

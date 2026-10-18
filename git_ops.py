@@ -153,21 +153,38 @@ def branch_and_push(
             )
 
 
+MAX_TITLE_LEN = 72  # ~git subject convention; GitHub list views truncate near here.
+
+
 def _summarize(spec: str) -> str:
-    """First non-empty line of the spec; used as the draft-PR title."""
+    """First non-empty line of the spec, capped at MAX_TITLE_LEN.
+
+    The cap trims at a word boundary when there's one in the window and
+    appends `…`. Used as the fallback PR title when the caller didn't
+    pass an explicit one. Specs are written for the model (dense, often
+    one long sentence), so the untruncated first line was blowing past
+    GitHub's title display width.
+    """
     for line in spec.strip().splitlines():
-        stripped = line.strip()
-        if stripped:
-            return stripped
+        s = line.strip()
+        if s:
+            if len(s) <= MAX_TITLE_LEN:
+                return s
+            # Leave one char for the ellipsis; break at the last space.
+            cut = s[: MAX_TITLE_LEN - 1].rsplit(" ", 1)[0]
+            if not cut:  # no space in the window — hard cut.
+                cut = s[: MAX_TITLE_LEN - 1]
+            return cut + "…"
     return "rae-local-agent transformation"
 
 
-def create_draft_pr(repo_root: Path, branch: str, spec: str) -> str:
+def create_draft_pr(repo_root: Path, branch: str, title: str, body: str) -> str:
     """Open a GitHub draft PR for `branch` on origin. Returns the PR URL.
 
-    Title is the first non-empty line of the spec; body is the full spec.
-    Assigned to `@me` (whoever is authed with `gh` in the worker's env).
-    Non-zero exit from `gh` raises `GhError` with stderr as the message.
+    Caller supplies the exact title and body — summarization + fallback
+    happen upstream in the worker. Assigned to `@me` (whoever is authed
+    with `gh` in the worker's env). Non-zero exit from `gh` raises
+    `GhError` with stderr as the message.
     """
     result = subprocess.run(
         [
@@ -178,9 +195,9 @@ def create_draft_pr(repo_root: Path, branch: str, spec: str) -> str:
             "--head",
             branch,
             "--title",
-            _summarize(spec),
+            title,
             "--body",
-            spec,
+            body,
             "--assignee",
             "@me",
         ],
