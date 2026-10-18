@@ -1,0 +1,45 @@
+name: PR Title Lint
+
+# release-please parses the squash-merge commit's subject line, which GitHub
+# fills from the PR title. If the title isn't Conventional Commits-shaped, the
+# resulting commit on main doesn't trigger a release — a release gets silently
+# skipped. This check fails PRs with non-conforming titles so we catch it
+# before the squash button, not after.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a commit SHA per CodeQL supply-chain hardening.
+      # Dependabot bumps the SHA weekly; update the trailing version tag
+      # in lockstep when it opens a PR.
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Allowed types — keep in lockstep with release-please-config.json's
+          # `changelog-sections`. Any type here that's `hidden` there will
+          # pass the lint but not trigger a release-please PR update.
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            chore
+            test
+            ci
+            build
+            style
+            revert
+          requireScope: false
+          # Default subjectPattern. Leaving default lets release-please's own
+          # commit-parsing be the source of truth; this check only validates
+          # the type prefix shape, not the subject's wording.
