@@ -297,6 +297,33 @@ systemctl --user daemon-reload
 systemctl --user restart rae-local-agent-worker
 ```
 
+### Phase C issue poller (scaffold only)
+
+The repo also ships `systemd/rae-local-agent-issue-poller.service`.
+C0 wires the entry point only — it loads
+`~/.config/rae-local-agent/repos.yaml`, logs that the poller is up,
+and exits. There's no polling loop yet (C1); don't `enable --now`
+until the slice that adds one lands.
+
+Format of `repos.yaml` is documented in `PHASE_C_DESIGN.md` §
+"Configuration". Minimal example:
+
+```yaml
+poll_interval_seconds: 300  # optional, default 300
+repos:
+  rae004/rae-budget: /home/rae004/projects/rae-budget
+```
+
+Dry-run the scaffold against a config:
+
+```bash
+uv run python issue_poller.py
+```
+
+A valid config logs `poller up with N repo(s), poll_interval=Ns` and
+exits zero. A missing or invalid config exits non-zero with an error
+line naming the offending field.
+
 ## Why the rewrite protocol (not the diff protocol)
 
 The first cut had the model emit a unified diff directly. It failed on
