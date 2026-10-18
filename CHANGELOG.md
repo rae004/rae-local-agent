@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/rae004/rae-local-agent/compare/v0.9.1...v0.10.0) (2026-10-18)
+
+
+### Features
+
+* C0 scaffold for the Phase C issue poller ([#32](https://github.com/rae004/rae-local-agent/issues/32)) ([0500c37](https://github.com/rae004/rae-local-agent/commit/0500c3731b2d70f0db5a05c2d36dfedbd0dab66d))
+
+
+### Documentation
+
+* Phase C design + milestone slice ([#31](https://github.com/rae004/rae-local-agent/issues/31)) ([3bb7605](https://github.com/rae004/rae-local-agent/commit/3bb7605d06bbfae331159e1f705f1c882e4cae9c))
+
 ## [0.9.1](https://github.com/rae004/rae-local-agent/compare/v0.9.0...v0.9.1) (2026-10-18)
 
 
