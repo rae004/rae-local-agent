@@ -1,13 +1,17 @@
 """Local-agent MCP server.
 
-Two tools:
+Four tools:
 
 - `apply_transformation(spec, scope, repo_root)` — synchronous rewrite
   protocol (Phase A). Calls the local Ollama coder model per file and
   returns the client-computed unified diff. The caller applies the diff.
-- `enqueue_job(spec, scope, repo_root)` — fire-and-forget queue surface
-  (Phase B). Writes a job record to `jobs/pending/` for the worker to
-  pick up asynchronously.
+- `enqueue_job(spec, scope, repo_root, ...)` — fire-and-forget queue
+  surface (Phase B). Writes a job record to `jobs/pending/` for the
+  worker to pick up asynchronously.
+- `get_job_status(job_id)` — look up a job across pending/running/done/
+  failed and return its state + artifacts (B6).
+- `list_jobs(state?)` — enumerate jobs, newest first, optionally filtered
+  by queue dir (B6).
 
 The model-handoff logic itself lives in `transform.py` so the worker can
 reuse it without importing the MCP server.
@@ -185,6 +189,102 @@ async def enqueue_job(
         spec, scope, repo_root, base_branch, test_cmd=test_cmd, skip_tests=skip_tests
     )
     return job.write_pending(record)
+
+
+# --- Phase B: status tools (B6) ------------------------------------------
+# Lets a Claude Code session ask "where is job X" or "what's queued" without
+# shelling into the project to cat files. Both read-only — no mutation of
+# the queue happens here.
+
+
+def _spec_summary(spec: str) -> str:
+    """First non-empty line of the spec, used for list_jobs output."""
+    for line in spec.strip().splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+@mcp.tool()
+async def get_job_status(
+    job_id: Annotated[
+        str,
+        Field(description="The id returned by `enqueue_job`."),
+    ],
+) -> dict:
+    """Look up a job across pending/running/done/failed. Raises if not found.
+
+    Returns a dict with the job's `state` (which queue dir it's in),
+    `status` from status.txt (empty while pending/running), the full
+    `diff` and `log` contents, and `branch` / `pr_url` when present.
+    The original `spec` and `created_at` from the record are included so
+    the response is self-contained for a caller that only has the id.
+    """
+    found = job.find_record(job_id)
+    if found is None:
+        raise ValueError(f"job not found: {job_id}")
+    state, record = found
+    resp: dict = {
+        "id": record["id"],
+        "state": state,
+        "spec": record["spec"],
+        "created_at": record["created_at"],
+        "status": "",
+        "diff": "",
+        "log": "",
+        "branch": "",
+        "pr_url": "",
+    }
+    if state in ("done", "failed"):
+        resp["status"] = job.read_artifact(job_id, state, "status.txt").strip()
+        resp["diff"] = job.read_artifact(job_id, state, "diff.patch")
+        resp["log"] = job.read_artifact(job_id, state, "log.txt")
+        resp["branch"] = job.read_artifact(job_id, state, "branch.txt").strip()
+        resp["pr_url"] = job.read_artifact(job_id, state, "pr_url.txt").strip()
+    return resp
+
+
+_VALID_STATES = ("pending", "running", "done", "failed")
+
+
+@mcp.tool()
+async def list_jobs(
+    state: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional filter: `pending`, `running`, `done`, or `failed`. "
+                "None/omitted lists jobs across all four dirs."
+            )
+        ),
+    ] = None,
+) -> list[dict]:
+    """Enumerate jobs, newest first.
+
+    Each entry has `id`, `state`, `status` (empty for pending/running),
+    `created_at`, and `spec_summary` (first non-empty line of the spec).
+    For richer per-job detail call `get_job_status(id)`.
+    """
+    if state is not None and state not in _VALID_STATES:
+        raise ValueError(f"state must be one of {_VALID_STATES} or None")
+
+    results: list[dict] = []
+    for s, rec in job.list_records(state):
+        status = (
+            job.read_artifact(rec["id"], s, "status.txt").strip() if s in ("done", "failed") else ""
+        )
+        results.append(
+            {
+                "id": rec["id"],
+                "state": s,
+                "status": status,
+                "created_at": rec["created_at"],
+                "spec_summary": _spec_summary(rec["spec"]),
+            }
+        )
+    results.sort(key=lambda r: r["created_at"], reverse=True)
+    return results
 
 
 if __name__ == "__main__":
