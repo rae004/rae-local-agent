@@ -7,6 +7,7 @@ an initial commit on `main`.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -252,11 +253,15 @@ def test_branch_and_push_raises_tests_failed_on_nonzero_exit(repo_pair):
 
 def test_tests_failed_error_captures_test_output(repo_pair):
     """TestsFailedError.log holds combined stdout+stderr of the test cmd."""
+    import sys as _sys
+
     repo, _ = repo_pair
     # Script writes to both stdout and stderr; order is preserved because
-    # branch_and_push merges stderr into stdout at the pipe level.
+    # branch_and_push merges stderr into stdout at the pipe level. Uses
+    # `sys.executable` so the subprocess doesn't rely on `python` being
+    # on PATH — the test gate scrubs the worker's venv from PATH per #22.
     script = (
-        "python -c \"import sys; print('OUT_LINE'); "
+        f"{_sys.executable} -c \"import sys; print('OUT_LINE'); "
         "print('ERR_LINE', file=sys.stderr); sys.exit(2)\""
     )
     with pytest.raises(git_ops.TestsFailedError) as excinfo:
@@ -288,6 +293,139 @@ def test_test_cmd_runs_in_worktree_with_applied_diff(repo_pair):
             # so we expect the inverted grep to exit non-zero → TestsFailedError.
             test_cmd=["sh", "-c", "! grep -q 'name) -> str' hello.py"],
         )
+
+
+# ---------- venv isolation (#22) ----------------------------------------
+
+
+def test_scrubbed_test_env_removes_uv_vars(monkeypatch):
+    """VIRTUAL_ENV / UV_PROJECT_ENVIRONMENT / UV_CACHE_DIR are dropped."""
+    monkeypatch.setenv("VIRTUAL_ENV", "/home/x/projects/rae-local-agent/.venv")
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", "/home/x/projects/rae-local-agent/.venv")
+    monkeypatch.setenv("UV_CACHE_DIR", "/home/x/.cache/uv")
+    monkeypatch.setenv("UNRELATED_VAR", "keep-me")
+
+    env = git_ops._scrubbed_test_env()
+
+    assert "VIRTUAL_ENV" not in env
+    assert "UV_PROJECT_ENVIRONMENT" not in env
+    assert "UV_CACHE_DIR" not in env
+    assert env.get("UNRELATED_VAR") == "keep-me"
+
+
+def test_scrubbed_test_env_filters_worker_venv_from_path(monkeypatch):
+    """rae-local-agent's `.venv/bin` is stripped from PATH; others survive."""
+    monkeypatch.setenv(
+        "PATH",
+        ":".join(
+            [
+                "/home/x/projects/rae-local-agent/.venv/bin",
+                "/usr/local/bin",
+                "/usr/bin",
+                "/bin",
+            ]
+        ),
+    )
+
+    env = git_ops._scrubbed_test_env()
+    parts = env["PATH"].split(":")
+
+    assert "/home/x/projects/rae-local-agent/.venv/bin" not in parts
+    assert "/usr/local/bin" in parts
+    assert "/usr/bin" in parts
+    assert "/bin" in parts
+
+
+def test_link_target_venv_symlinks_when_src_exists(tmp_path):
+    """A real `.venv` in repo_root → symlink in the worktree pointing at it."""
+    repo = tmp_path / "repo"
+    (repo / ".venv").mkdir(parents=True)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+
+    git_ops._link_target_venv(repo, wt)
+
+    link = wt / ".venv"
+    assert link.is_symlink()
+    assert link.resolve() == (repo / ".venv").resolve()
+
+
+def test_link_target_venv_noop_when_src_missing(tmp_path):
+    """No `.venv` in repo_root → no symlink attempted, no error."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = tmp_path / "wt"
+    wt.mkdir()
+
+    git_ops._link_target_venv(repo, wt)
+
+    assert not (wt / ".venv").exists()
+
+
+def test_link_target_venv_idempotent(tmp_path):
+    """A pre-existing `.venv` entry in the worktree is left alone."""
+    repo = tmp_path / "repo"
+    (repo / ".venv").mkdir(parents=True)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    # Simulate a previous link (or an unrelated .venv dropped by uv).
+    pre_existing = wt / ".venv"
+    pre_existing.mkdir()
+
+    git_ops._link_target_venv(repo, wt)
+
+    # Still a directory, not replaced with a symlink.
+    assert pre_existing.is_dir()
+    assert not pre_existing.is_symlink()
+
+
+def test_test_cmd_runs_with_scrubbed_env(repo_pair, monkeypatch):
+    """The test subprocess does NOT see the worker's VIRTUAL_ENV."""
+    repo, _ = repo_pair
+    monkeypatch.setenv("VIRTUAL_ENV", "/home/x/projects/rae-local-agent/.venv")
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", "/home/x/projects/rae-local-agent/.venv")
+
+    # Script fails iff VIRTUAL_ENV or UV_PROJECT_ENVIRONMENT is set.
+    # If they aren't scrubbed, the test gate "passes" against this
+    # test_cmd and the branch gets pushed; we assert the opposite.
+    script = (
+        'test -z "$VIRTUAL_ENV" && test -z "$UV_PROJECT_ENVIRONMENT" '
+        '|| { echo "LEAKED VIRTUAL_ENV=$VIRTUAL_ENV UV_PROJECT_ENVIRONMENT='
+        '$UV_PROJECT_ENVIRONMENT"; exit 1; }'
+    )
+    # Should pass (zero exit) because the scrubbed env hides both vars.
+    git_ops.branch_and_push(
+        repo_root=repo,
+        base_branch="main",
+        new_branch="rae-local-agent/gate-env-scrubbed",
+        diff_text=_HELLO_DIFF,
+        commit_message="s",
+        test_cmd=["sh", "-c", script],
+    )
+
+
+def test_test_cmd_runs_with_filtered_path(repo_pair, monkeypatch):
+    """rae-local-agent's venv bin is not on the subprocess PATH."""
+    repo, _ = repo_pair
+    # Original PATH is preserved by scrubbing except for the fragment match.
+    monkeypatch.setenv(
+        "PATH",
+        "/home/x/projects/rae-local-agent/.venv/bin:" + os.environ.get("PATH", ""),
+    )
+
+    script = (
+        'case ":$PATH:" in '
+        '*":/home/x/projects/rae-local-agent/.venv/bin:"*) '
+        'echo "LEAK: $PATH"; exit 1 ;; esac'
+    )
+    git_ops.branch_and_push(
+        repo_root=repo,
+        base_branch="main",
+        new_branch="rae-local-agent/gate-path-filtered",
+        diff_text=_HELLO_DIFF,
+        commit_message="s",
+        test_cmd=["sh", "-c", script],
+    )
 
 
 # ---------- draft PR creation (B5) --------------------------------------

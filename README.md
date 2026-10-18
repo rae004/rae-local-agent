@@ -20,9 +20,7 @@ a 32B coder can do locally.
 - **Phase A**: one tool, advisory, one-shot per file. Done.
 - **Phase B**: queue, model handoff, worktree, test gate, draft PR,
   status tools, systemd packaging, and a documented first real run
-  against a real target repo. Done. One known gate bug tracked in
-  [#22](https://github.com/rae004/rae-local-agent/issues/22) — see
-  [First real run](#first-real-run) below for the honest version.
+  against a real target repo. Done. See [First real run](#first-real-run).
   See `MILESTONES.md` for the slice plan.
 - **Phase C** (planned): standing task feed from GitHub issues.
 
@@ -49,22 +47,17 @@ sequentially while the session moved on:
   the same breath — exercises queue serialization against a real
   target.
 
-### Honest caveat on #237 and #238
+### Historical note on #237 and #238
 
-Both shipped with `skip_tests=true`. The B4 test gate as implemented
-is theater: it runs `uv run pytest -q` inside the worktree but
-inherits the systemd service's uv context, so `uv` resolves to
-rae-local-agent's `.venv` instead of the target repo's. On any target
-whose dependencies aren't a subset of rae-local-agent's (which is
-most of them), collection errors on the target's `conftest.py` and
-the gate fails every job regardless of the diff.
-
-Tracked in
-[#22](https://github.com/rae004/rae-local-agent/issues/22). Must fix
-before Phase C — a gate that can't tell a passing diff from a failing
-one isn't a gate. The two diffs here are pure annotations and were
-reviewed by hand before merge, so the shortcut was safe for this
-specific run.
+Both shipped with `skip_tests=true`. The B4 test gate was running
+`uv run pytest -q` with the systemd service's inherited uv context,
+so `uv` resolved to rae-local-agent's `.venv` instead of the target
+repo's and collection errored on the target's `conftest.py`. Tracked
+and fixed in
+[#22](https://github.com/rae004/rae-local-agent/issues/22) — the test
+subprocess now runs with `VIRTUAL_ENV`/`UV_PROJECT_ENVIRONMENT`
+scrubbed and the target repo's `.venv` symlinked into the worktree,
+so the gate actually resolves against the target.
 
 ## Requirements
 

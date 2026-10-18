@@ -148,11 +148,12 @@ human intervention between `enqueue_job` and the PR URL landing in
   `bill_templates.py`, peer to #237.
 
 #237 and #238 shipped with `skip_tests=true` because the test gate
-runs under rae-local-agent's venv instead of the target repo's —
-tracked in
-[#22](https://github.com/rae004/rae-local-agent/issues/22). The
-diffs are pure annotations and were reviewed by hand before merge.
-Fixing #22 is a Phase C prerequisite.
+was running under rae-local-agent's venv instead of the target
+repo's. Fixed in
+[#22](https://github.com/rae004/rae-local-agent/issues/22); the gate
+now scrubs `VIRTUAL_ENV`/`UV_PROJECT_ENVIRONMENT` and symlinks the
+target repo's `.venv` into the worktree so `uv run` resolves against
+the target.
 
 See the "First real run" section of the README for the readable
 version.
