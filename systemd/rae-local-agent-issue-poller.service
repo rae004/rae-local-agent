@@ -1,0 +1,42 @@
+# Systemd user unit for the Phase C issue poller.
+# Install: see README.md § "Running the issue poller as a systemd user service".
+#
+# Independent of the worker: a poller crash doesn't take down the worker,
+# and vice-versa. Both services should be enabled together.
+#
+# Scope-tweakable bits:
+#   WorkingDirectory  — override if you cloned somewhere other than
+#                       $HOME/projects/rae-local-agent.
+#   EnvironmentFile   — optional; share the same env file as the worker.
+#   ExecStart         — assumes uv is installed per-user at
+#                       ~/.local/bin/uv (the astral installer's default).
+#
+# C0 scope: this unit runs the stub main that validates
+# ~/.config/rae-local-agent/repos.yaml and exits. Not a long-running
+# service yet; use `systemctl --user start` to drive it on-demand and
+# read the journald output. C1 wires in the polling loop and the
+# `Restart=on-failure` policy is where it needs to be for a real
+# service.
+
+[Unit]
+Description=rae-local-agent GitHub issue poller
+Documentation=https://github.com/rae004/rae-local-agent
+# Needs GitHub; wait for the network before starting.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/rae-local-agent
+EnvironmentFile=-%h/.config/rae-local-agent/env
+ExecStart=%h/.local/bin/uv run python issue_poller.py
+# Restart on crashes with a backoff. A non-zero exit from the config
+# validator will keep retrying; fix the config to break the loop.
+Restart=on-failure
+RestartSec=5s
+# stdlib `logging` writes to stderr; journald captures it.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
