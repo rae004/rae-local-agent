@@ -118,14 +118,10 @@ def _diff(rel: str, original: str, rewritten: str) -> str:
         orig[-1] += "\n"
     if new and not new[-1].endswith("\n"):
         new[-1] += "\n"
-    return "".join(
-        difflib.unified_diff(orig, new, fromfile=f"a/{rel}", tofile=f"b/{rel}", n=3)
-    )
+    return "".join(difflib.unified_diff(orig, new, fromfile=f"a/{rel}", tofile=f"b/{rel}", n=3))
 
 
-async def _rewrite_one(
-    client: httpx.AsyncClient, spec: str, rel: str, content: str
-) -> str:
+async def _rewrite_one(client: httpx.AsyncClient, spec: str, rel: str, content: str) -> str:
     response = await client.post(
         OLLAMA_URL,
         json={
@@ -159,8 +155,7 @@ async def apply_transformation(
         str,
         Field(
             description=(
-                "Absolute path to the repository root. `scope` paths are "
-                "resolved against this."
+                "Absolute path to the repository root. `scope` paths are resolved against this."
             )
         ),
     ],

@@ -4,15 +4,13 @@ Covers the parsing + diffing layer. The httpx call and the MCP tool
 decorator are not exercised here — the first needs a live Ollama, the
 second is a decorator from the SDK that just registers the function.
 """
+
 from __future__ import annotations
 
 import pathlib
 import subprocess
 
-import pytest
-
 from server import _diff, _strip_fences
-
 
 # ---------- _strip_fences -------------------------------------------------
 
@@ -61,9 +59,7 @@ def test_diff_normalises_missing_trailing_newline() -> None:
 def test_diff_output_applies_via_git_apply(tmp_path: pathlib.Path) -> None:
     """The reason the whole rewrite protocol exists: diffs must apply."""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    subprocess.run(
-        ["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True
-    )
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
 
     original = "line one\nline two\nline three\nline four\nline five\n"
@@ -78,7 +74,9 @@ def test_diff_output_applies_via_git_apply(tmp_path: pathlib.Path) -> None:
 
     r = subprocess.run(
         ["git", "apply", "--check", "p.diff"],
-        cwd=tmp_path, capture_output=True, text=True,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0, f"git apply --check failed: {r.stderr}"
 
