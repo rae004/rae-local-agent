@@ -17,8 +17,10 @@ a 32B coder can do locally.
 
 ## Status
 
-- **Phase A** (this): one tool, advisory, one-shot per file. Done.
-- **Phase B** (planned): job queue, git branching, PR creation.
+- **Phase A**: one tool, advisory, one-shot per file. Done.
+- **Phase B** (in progress): job queue, git branching, draft PR creation.
+  Walking skeleton (`enqueue_job` + worker loop, no model/git/PR yet) is
+  landed; see `MILESTONES.md` for the slice plan.
 - **Phase C** (planned): standing task feed from GitHub issues.
 
 ## Requirements
@@ -66,11 +68,9 @@ Wire into Claude Code (user-global, `~/.claude.json`):
 
 Restart Claude Code to pick up the new MCP server.
 
-## The one tool
+## Tools
 
-```
-apply_transformation(spec, scope, repo_root) -> unified diff
-```
+### `apply_transformation(spec, scope, repo_root) -> unified diff`
 
 - `spec` — tight description of the mechanical operation.
 - `scope` — list of repo-relative file paths to transform.
@@ -90,6 +90,27 @@ or exploration. Keep those for the planner.
 
 Claude Code will call the tool, show you the returned diff, and apply
 it with its own `Edit` tool if correct.
+
+### `enqueue_job(spec, scope, repo_root) -> job id` (Phase B, in progress)
+
+Fire-and-forget variant. Enqueues a transformation for a background worker
+to run; returns the job id immediately. Use this when the result doesn't
+need to be reviewed inline — e.g. a type-hint sweep that can come back as a
+draft PR during the next review window.
+
+Current slice (B1) proves the queue mechanic: jobs flow `pending → running
+→ done` on disk. Model handoff, git branching, and draft PR creation
+arrive in B2–B5 (see `MILESTONES.md`).
+
+Run the worker:
+
+```bash
+uv run python worker.py
+```
+
+The worker polls `jobs/pending/`, moves each job through the four
+directories under `jobs/`, and logs via stdlib `logging`. Later milestones
+package it as a systemd user service.
 
 ## Why the rewrite protocol (not the diff protocol)
 
