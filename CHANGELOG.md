@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/rae004/rae-local-agent/compare/v0.2.0...v0.3.0) (2026-10-18)
+
+
+### Features
+
+* worker pushes a branch after applying the diff (B3) ([#10](https://github.com/rae004/rae-local-agent/issues/10)) ([7f962c5](https://github.com/rae004/rae-local-agent/commit/7f962c55c3c2b5ee9456e979b63e1830b0d7516d))
+
 ## [0.2.0](https://github.com/rae004/rae-local-agent/compare/v0.1.1...v0.2.0) (2026-10-18)
 
 
