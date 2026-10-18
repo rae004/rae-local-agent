@@ -1,0 +1,33 @@
+# Systemd user unit for the Phase B worker.
+# Install: see README.md § "Running the worker as a systemd user service".
+#
+# Scope-tweakable bits:
+#   WorkingDirectory  — override if you cloned somewhere other than
+#                       $HOME/projects/rae-local-agent.
+#   EnvironmentFile   — optional; create ~/.config/rae-local-agent/env with
+#                       LOCAL_AGENT_OLLAMA_HOST / LOCAL_AGENT_MODEL.
+#   ExecStart         — assumes uv is installed per-user at
+#                       ~/.local/bin/uv (the astral installer's default).
+
+[Unit]
+Description=rae-local-agent background job worker
+Documentation=https://github.com/rae004/rae-local-agent
+# Needs Ollama and GitHub; wait for the network before starting.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/rae-local-agent
+EnvironmentFile=-%h/.config/rae-local-agent/env
+ExecStart=%h/.local/bin/uv run python worker.py
+# Restart on crashes with a backoff. A clean exit from systemctl stop
+# (SIGTERM, which worker.py handles cleanly) does NOT restart.
+Restart=on-failure
+RestartSec=5s
+# stdlib `logging` writes to stderr; journald captures it.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
