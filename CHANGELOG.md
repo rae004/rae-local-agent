@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/rae004/rae-local-agent/compare/v0.9.0...v0.9.1) (2026-10-18)
+
+
+### Documentation
+
+* cite rae-budget[#242](https://github.com/rae004/rae-local-agent/issues/242) as the B9 grouping validation ([#29](https://github.com/rae004/rae-local-agent/issues/29)) ([1bcdda4](https://github.com/rae004/rae-local-agent/commit/1bcdda451e9464903c4ecc740dbe5db2e985386c))
+
 ## [0.9.0](https://github.com/rae004/rae-local-agent/compare/v0.8.2...v0.9.0) (2026-10-18)
 
 
