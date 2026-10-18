@@ -288,3 +288,76 @@ def test_test_cmd_runs_in_worktree_with_applied_diff(repo_pair):
             # so we expect the inverted grep to exit non-zero → TestsFailedError.
             test_cmd=["sh", "-c", "! grep -q 'name) -> str' hello.py"],
         )
+
+
+# ---------- draft PR creation (B5) --------------------------------------
+
+
+def test_summarize_takes_first_nonempty_line():
+    assert git_ops._summarize("add type hints\nto files foo and bar") == "add type hints"
+
+
+def test_summarize_skips_leading_whitespace_lines():
+    assert git_ops._summarize("\n\n  rename greet to say_hello\n") == "rename greet to say_hello"
+
+
+def test_summarize_falls_back_when_spec_is_blank():
+    assert git_ops._summarize("   \n\n   ") == "rae-local-agent transformation"
+
+
+def test_create_draft_pr_invokes_gh_with_expected_args(tmp_path, monkeypatch):
+    """gh pr create is invoked with --draft, --head, --title, --body, --assignee."""
+    calls: list[tuple] = []
+
+    def fake_run(cmd, cwd, capture_output, text):
+        calls.append((cmd, cwd))
+        return subprocess.CompletedProcess(cmd, 0, "https://github.com/x/y/pull/42\n", "")
+
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+
+    url = git_ops.create_draft_pr(
+        repo_root=tmp_path,
+        branch="rae-local-agent/abc",
+        spec="add type hints to foo and bar",
+    )
+
+    assert url == "https://github.com/x/y/pull/42"
+    assert len(calls) == 1
+    cmd, cwd = calls[0]
+    assert cmd[:3] == ["gh", "pr", "create"]
+    assert "--draft" in cmd
+    assert cmd[cmd.index("--head") + 1] == "rae-local-agent/abc"
+    assert cmd[cmd.index("--title") + 1] == "add type hints to foo and bar"
+    assert cmd[cmd.index("--body") + 1] == "add type hints to foo and bar"
+    assert cmd[cmd.index("--assignee") + 1] == "@me"
+    assert cwd == tmp_path
+
+
+def test_create_draft_pr_title_is_first_line_of_multiline_spec(tmp_path, monkeypatch):
+    """Multiline spec → title is first line, body is the whole spec."""
+    captured = {}
+
+    def fake_run(cmd, cwd, capture_output, text):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, "https://example/pull/1\n", "")
+
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+
+    spec = "rename greet to say_hello\n\nalso update all call sites across the repo"
+    git_ops.create_draft_pr(repo_root=tmp_path, branch="rae-local-agent/x", spec=spec)
+
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--title") + 1] == "rename greet to say_hello"
+    assert cmd[cmd.index("--body") + 1] == spec
+
+
+def test_create_draft_pr_raises_gh_error_on_nonzero_exit(tmp_path, monkeypatch):
+    """Non-zero gh exit → GhError carrying stderr."""
+
+    def fake_run(cmd, cwd, capture_output, text):
+        return subprocess.CompletedProcess(cmd, 1, "", "gh: not authenticated\n")
+
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+
+    with pytest.raises(git_ops.GhError, match="gh pr create failed.*not authenticated"):
+        git_ops.create_draft_pr(repo_root=tmp_path, branch="x", spec="s")

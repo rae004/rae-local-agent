@@ -1,18 +1,19 @@
-"""Phase B worker (B4 — test gate).
+"""Phase B worker (B5 — draft PR creation).
 
 Watches `jobs/pending/`, picks jobs up, runs the model handoff, applies
-the diff in an isolated worktree, runs the target repo's tests, and
-only on a passing suite pushes a `rae-local-agent/<job-id>` branch to
-origin. Each move between queue directories is an atomic `os.rename`,
-so a crash leaves the job in exactly one state.
+the diff in an isolated worktree, runs the target repo's tests, pushes
+a `rae-local-agent/<job-id>` branch to origin, and opens a draft PR
+assigned to the authed user. Each move between queue directories is an
+atomic `os.rename`, so a crash leaves the job in exactly one state.
 
-Shape of a completed job after B4:
+Shape of a completed job after B5:
 
     jobs/done/<id>/
         job.json       # the original record (moved from running/)
         diff.patch     # the model-produced unified diff (possibly empty)
         status.txt     # one line: `ok | model_declined | error:<msg>`
-        branch.txt     # pushed branch name (only when status is `ok`)
+        branch.txt     # pushed branch name (ok, or push-ok + gh-failed)
+        pr_url.txt     # draft PR URL (only when status is `ok`)
 
     jobs/failed/<id>/
         job.json       # the original record
@@ -37,7 +38,7 @@ still in running/ and re-runs the transformation, overwriting the
 stale artifacts. The job is "complete" iff the record has been
 finalized into either done/ or failed/.
 
-Not yet in scope: draft PR creation (B5), status tool (B6).
+Not yet in scope: status tool (B6), systemd service (B7).
 """
 
 from __future__ import annotations
@@ -85,22 +86,25 @@ def _test_cmd_for(record: dict) -> list[str] | None:
     return record.get("test_cmd") or DEFAULT_TEST_CMD
 
 
-def _handle_job(record: dict, jid: str) -> tuple[str, str, str, str]:
+def _handle_job(record: dict, jid: str) -> tuple[str, str, str, str, str]:
     """Run the full pipeline for one job.
 
-    Returns (diff, status, branch, test_log):
+    Returns (diff, status, branch, test_log, pr_url):
 
     - diff: unified diff produced by the model (empty on dirty_tree or
       early failure; non-empty on model-produced output, retained on
       tests_failed so the user can see what was tried).
     - status: `ok | model_declined | tests_failed | error:<msg>`.
-    - branch: pushed branch name (only when status is `ok`).
+    - branch: pushed branch name. Written when a push succeeded even if
+      the subsequent draft-PR step failed — the user can open the PR
+      manually from the branch.
     - test_log: test-command output (only when status is `tests_failed`).
+    - pr_url: draft PR URL (only when status is `ok`).
     """
     repo_root = Path(record["repo_root"])
     try:
         if not git_ops.is_clean(repo_root):
-            return "", "error:dirty_tree", "", ""
+            return "", "error:dirty_tree", "", "", ""
 
         diff = _run_transformation_sync(
             record["spec"],
@@ -108,7 +112,7 @@ def _handle_job(record: dict, jid: str) -> tuple[str, str, str, str]:
             record["repo_root"],
         )
         if not diff:
-            return "", "model_declined", "", ""
+            return "", "model_declined", "", "", ""
 
         branch = f"{BRANCH_PREFIX}/{jid}"
         try:
@@ -121,10 +125,22 @@ def _handle_job(record: dict, jid: str) -> tuple[str, str, str, str]:
                 test_cmd=_test_cmd_for(record),
             )
         except git_ops.TestsFailedError as e:
-            return diff, "tests_failed", "", e.log
-        return diff, "ok", branch, ""
+            return diff, "tests_failed", "", e.log, ""
+
+        # Branch is on origin. Open the draft PR.
+        try:
+            pr_url = git_ops.create_draft_pr(
+                repo_root=repo_root,
+                branch=branch,
+                spec=record["spec"],
+            )
+        except Exception as e:
+            # Push succeeded but gh failed — keep branch so the user can
+            # recover by opening the PR by hand.
+            return diff, f"error:{type(e).__name__}: {e}", branch, "", ""
+        return diff, "ok", branch, "", pr_url
     except Exception as e:
-        return "", f"error:{type(e).__name__}: {e}", "", ""
+        return "", f"error:{type(e).__name__}: {e}", "", "", ""
 
 
 def process(path: Path) -> str:
@@ -136,9 +152,15 @@ def process(path: Path) -> str:
     jid = path.stem
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
-        diff, status, branch, test_log = _handle_job(record, jid)
+        diff, status, branch, test_log, pr_url = _handle_job(record, jid)
     except Exception as e:
-        diff, status, branch, test_log = "", f"error:{type(e).__name__}: {e}", "", ""
+        diff, status, branch, test_log, pr_url = (
+            "",
+            f"error:{type(e).__name__}: {e}",
+            "",
+            "",
+            "",
+        )
         log.exception("job %s failed to load record", jid)
 
     out_dir = job.failed_job_dir(jid) if status == "tests_failed" else job.done_job_dir(jid)
@@ -149,6 +171,8 @@ def process(path: Path) -> str:
         (out_dir / "branch.txt").write_text(branch + "\n", encoding="utf-8")
     if test_log:
         (out_dir / "log.txt").write_text(test_log, encoding="utf-8")
+    if pr_url:
+        (out_dir / "pr_url.txt").write_text(pr_url + "\n", encoding="utf-8")
     log.info("job %s %s", jid, status)
     return status
 

@@ -1,6 +1,6 @@
-"""Git plumbing used by the Phase B worker (B3+).
+"""Git + gh plumbing used by the Phase B worker (B3+).
 
-Two concerns:
+Three concerns:
 
 - `is_clean(repo_root)` — pre-flight: does the user have uncommitted
   changes in the target repo? If so the worker refuses the job entirely.
@@ -11,11 +11,14 @@ Two concerns:
   is never touched. If `test_cmd` is given (B4), runs it in the worktree
   between apply and commit; a non-zero exit raises `TestsFailedError`
   and nothing is pushed.
+- `create_draft_pr(...)` — after the push, open a GitHub draft PR via
+  the `gh` CLI, assigned to the authed user. Returns the PR URL.
 
-Why subprocess over a git library: no new dep, straight-line reads, and
-the error messages come back as git's own stderr — which is exactly
-what we want surfaced in status.txt. If the subprocess churn ever
-becomes a problem we can swap to pygit2 behind this module's seam.
+Why subprocess over libraries: no new deps, straight-line reads, and
+the error messages come back as git's / gh's own stderr — which is
+exactly what we want surfaced in status.txt. If the subprocess churn
+ever becomes a problem we can swap to pygit2 / an API client behind
+this module's seam.
 """
 
 from __future__ import annotations
@@ -40,6 +43,10 @@ class TestsFailedError(RuntimeError):
     def __init__(self, log: str):
         super().__init__("test command failed")
         self.log = log
+
+
+class GhError(RuntimeError):
+    """A gh subprocess returned non-zero. The message carries stderr."""
 
 
 def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -144,3 +151,43 @@ def branch_and_push(
                 cwd=repo_root,
                 capture_output=True,
             )
+
+
+def _summarize(spec: str) -> str:
+    """First non-empty line of the spec; used as the draft-PR title."""
+    for line in spec.strip().splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return "rae-local-agent transformation"
+
+
+def create_draft_pr(repo_root: Path, branch: str, spec: str) -> str:
+    """Open a GitHub draft PR for `branch` on origin. Returns the PR URL.
+
+    Title is the first non-empty line of the spec; body is the full spec.
+    Assigned to `@me` (whoever is authed with `gh` in the worker's env).
+    Non-zero exit from `gh` raises `GhError` with stderr as the message.
+    """
+    result = subprocess.run(
+        [
+            "gh",
+            "pr",
+            "create",
+            "--draft",
+            "--head",
+            branch,
+            "--title",
+            _summarize(spec),
+            "--body",
+            spec,
+            "--assignee",
+            "@me",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise GhError(f"gh pr create failed: {result.stderr.strip() or result.stdout.strip()}")
+    return result.stdout.strip()
