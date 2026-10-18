@@ -1,19 +1,25 @@
-"""Phase B worker (B2 — model handoff).
+"""Phase B worker (B3 — git branch + commit + push).
 
-Watches `jobs/pending/`, picks jobs up, runs the model handoff, writes
-the diff and a one-line status into a per-job directory under
-`jobs/done/<id>/`. Each move between queue directories is an atomic
+Watches `jobs/pending/`, picks jobs up, runs the model handoff, and
+on a non-empty diff pushes a `rae-local-agent/<job-id>` branch to the
+target repo's origin. Each move between queue directories is an atomic
 `os.rename`, so a crash leaves the job in exactly one state. On every
 tick, anything already in `jobs/running/` is reconciled first — treated
 as a recovery of a prior worker that died mid-process, finished to
 `done/`.
 
-Shape of a done job after B2:
+Shape of a done job after B3:
 
     jobs/done/<id>/
         job.json       # the original record (moved from running/)
         diff.patch     # the model-produced unified diff (possibly empty)
         status.txt     # one line: `ok | model_declined | error:<msg>`
+        branch.txt     # pushed branch name (only when status is `ok`)
+
+Pre-flight: before any model call, the worker checks the target repo
+is clean (`git status --porcelain` empty). A dirty tree aborts the job
+with `error:dirty_tree` — don't interfere with the user's in-flight
+work there.
 
 Partial-crash semantics: artifacts are written before the final rename
 of `running/<id>.json` → `done/<id>/job.json`. If the worker dies
@@ -21,7 +27,7 @@ between the two, the next tick's recovery pass sees the record still
 in running/ and re-runs the transformation, overwriting the stale
 artifacts. The job is "complete" iff the record is in done/<id>/.
 
-Not yet in scope: git branch, test gate, draft PR (B3–B5).
+Not yet in scope: test gate (B4), draft PR (B5).
 """
 
 from __future__ import annotations
@@ -33,12 +39,14 @@ import signal
 import time
 from pathlib import Path
 
+import git_ops
 import job
 from transform import run_transformation
 
 log = logging.getLogger("rae-local-agent.worker")
 
 POLL_SECONDS = 1.0
+BRANCH_PREFIX = "rae-local-agent"
 
 
 class _StopFlag:
@@ -59,37 +67,58 @@ def _run_transformation_sync(spec: str, scope: list[str], repo_root: str) -> str
     return asyncio.run(run_transformation(spec, scope, repo_root))
 
 
-def _status_for(diff: str) -> str:
-    """ok iff the model actually changed something; model_declined otherwise."""
-    return "ok" if diff else "model_declined"
+def _handle_job(record: dict, jid: str) -> tuple[str, str, str]:
+    """Run the full pipeline for one job and return (diff, status, branch).
+
+    `branch` is empty unless we pushed one. Any exception becomes an
+    `error:<class>: <msg>` status — the queue invariant is that the
+    worker never gets stuck on a bad job.
+    """
+    repo_root = Path(record["repo_root"])
+    try:
+        if not git_ops.is_clean(repo_root):
+            return "", "error:dirty_tree", ""
+
+        diff = _run_transformation_sync(
+            record["spec"],
+            record["scope"],
+            record["repo_root"],
+        )
+        if not diff:
+            return "", "model_declined", ""
+
+        branch = f"{BRANCH_PREFIX}/{jid}"
+        git_ops.branch_and_push(
+            repo_root=repo_root,
+            base_branch=record.get("base_branch", "main"),
+            new_branch=branch,
+            diff_text=diff,
+            commit_message=record["spec"],
+        )
+        return diff, "ok", branch
+    except Exception as e:
+        return "", f"error:{type(e).__name__}: {e}", ""
 
 
 def process(path: Path) -> None:
-    """Run the transformation described by the job at `path` and write
-    diff.patch + status.txt into its done/<id>/ output dir.
+    """Run the job at `path` and write artifacts into its done/<id>/ dir.
 
-    Any exception is caught and recorded as `error:<msg>` in status.txt
-    rather than propagated — the queue invariant is "the worker never
-    gets stuck on a bad job." Failures still move to done/ in B2; the
-    failed/ bucket is reserved for B4's test gate.
+    See `_handle_job` for the pipeline. The outputs land as diff.patch,
+    status.txt, and (when `ok`) branch.txt.
     """
     jid = path.stem
     out_dir = job.done_job_dir(jid)
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
-        diff = _run_transformation_sync(
-            record["spec"],
-            record["scope"],
-            record["repo_root"],
-        )
-        status = _status_for(diff)
+        diff, status, branch = _handle_job(record, jid)
     except Exception as e:
-        diff = ""
-        status = f"error:{type(e).__name__}: {e}"
-        log.exception("job %s failed", jid)
+        diff, status, branch = "", f"error:{type(e).__name__}: {e}", ""
+        log.exception("job %s failed to load record", jid)
     (out_dir / "diff.patch").write_text(diff, encoding="utf-8")
     (out_dir / "status.txt").write_text(status + "\n", encoding="utf-8")
+    if branch:
+        (out_dir / "branch.txt").write_text(branch + "\n", encoding="utf-8")
     log.info("job %s %s", jid, status)
 
 
