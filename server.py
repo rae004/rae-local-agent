@@ -89,11 +89,16 @@ async def apply_transformation(
 # MILESTONES.md for the slice shape.
 
 
+DEFAULT_TEST_CMD = ["uv", "run", "pytest", "-q"]
+
+
 def _make_job_record(
     spec: str,
     scope: list[str],
     repo_root: str,
     base_branch: str = "main",
+    test_cmd: list[str] | None = None,
+    skip_tests: bool = False,
 ) -> dict:
     """Build the on-disk job record. Raises if repo_root is not a directory."""
     root = Path(repo_root).resolve()
@@ -106,6 +111,8 @@ def _make_job_record(
         "scope": scope,
         "repo_root": str(root),
         "base_branch": base_branch,
+        "test_cmd": test_cmd if test_cmd is not None else list(DEFAULT_TEST_CMD),
+        "skip_tests": skip_tests,
     }
 
 
@@ -143,6 +150,26 @@ async def enqueue_job(
             )
         ),
     ] = "main",
+    test_cmd: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Shell-safe argv the worker runs in the applied worktree after "
+                "`git apply` and before `git commit`. Non-zero exit → job moves "
+                "to failed/<id>/ with test output in log.txt, branch is NOT "
+                "pushed. Defaults to `uv run pytest -q`."
+            )
+        ),
+    ] = None,
+    skip_tests: Annotated[
+        bool,
+        Field(
+            description=(
+                "Bypass the test gate entirely. Use for intentional-behavior-"
+                "change jobs where the current test suite is expected to fail."
+            )
+        ),
+    ] = False,
 ) -> str:
     """Enqueue a code-transformation job for the background worker.
 
@@ -154,7 +181,9 @@ async def enqueue_job(
     to be reviewed inline — e.g. a type-hint sweep that can wait for a draft
     PR, or a multi-file rename to come back during the next review window.
     """
-    record = _make_job_record(spec, scope, repo_root, base_branch)
+    record = _make_job_record(
+        spec, scope, repo_root, base_branch, test_cmd=test_cmd, skip_tests=skip_tests
+    )
     return job.write_pending(record)
 
 

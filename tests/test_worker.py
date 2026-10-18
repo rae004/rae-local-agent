@@ -1,11 +1,11 @@
 """Tests for the Phase B worker loop.
 
 Covers the queue mechanic (B1 — pickup, recovery, sorted order), the
-model-handoff output shape (B2 — diff.patch + status.txt), and the git
-push step (B3 — dirty-tree pre-flight + branch.txt). The real model
-call and real git subprocesses are both stubbed so the tests don't
-need a live Ollama or a git working tree. See `test_git_ops.py` for
-the actual git plumbing coverage.
+model-handoff output shape (B2 — diff.patch + status.txt), the git
+push step (B3 — dirty-tree pre-flight + branch.txt), and the test
+gate (B4 — tests_failed + failed/ routing + log.txt). The real model
+call and real git subprocesses are both stubbed; see `test_git_ops.py`
+for the git plumbing coverage.
 """
 
 from __future__ import annotations
@@ -27,15 +27,19 @@ def jobs_root(tmp_path, monkeypatch):
     monkeypatch.setattr(job, "JOBS_ROOT", tmp_path)
     # Stub git by default — the queue+model tests don't exercise it.
     monkeypatch.setattr(git_ops, "is_clean", lambda _repo_root: True)
-    monkeypatch.setattr(
-        git_ops,
-        "branch_and_push",
-        lambda **_: None,
-    )
+    monkeypatch.setattr(git_ops, "branch_and_push", lambda **_: None)
     return tmp_path
 
 
-def _write_pending(jobs_root, jid: str, spec: str = "noop", scope=None, repo_root=None):
+def _write_pending(
+    jobs_root,
+    jid: str,
+    spec: str = "noop",
+    scope=None,
+    repo_root=None,
+    skip_tests: bool = False,
+    test_cmd=None,
+):
     """Drop a well-formed job record into pending/."""
     rec = {
         "id": jid,
@@ -43,6 +47,8 @@ def _write_pending(jobs_root, jid: str, spec: str = "noop", scope=None, repo_roo
         "scope": scope if scope is not None else [],
         "repo_root": repo_root or str(jobs_root),
         "base_branch": "main",
+        "test_cmd": test_cmd if test_cmd is not None else ["uv", "run", "pytest", "-q"],
+        "skip_tests": skip_tests,
     }
     (jobs_root / "pending" / f"{jid}.json").write_text(json.dumps(rec))
     return rec
@@ -57,7 +63,7 @@ def _stub_transformation(monkeypatch, result: str = "") -> None:
     )
 
 
-# ---------- B1 queue mechanic (shape updated for B2 done, B3 git stub) ---
+# ---------- B1 queue mechanic -------------------------------------------
 
 
 def test_tick_empty_queue(jobs_root):
@@ -93,6 +99,8 @@ def test_tick_recovers_orphaned_running(jobs_root, monkeypatch):
         "scope": [],
         "repo_root": str(jobs_root),
         "base_branch": "main",
+        "test_cmd": ["true"],
+        "skip_tests": True,
     }
     (jobs_root / "running" / "crashed.json").write_text(json.dumps(rec))
     assert worker.tick() == 1
@@ -109,6 +117,8 @@ def test_recovery_precedes_pending(jobs_root, monkeypatch, caplog):
         "scope": [],
         "repo_root": str(jobs_root),
         "base_branch": "main",
+        "test_cmd": ["true"],
+        "skip_tests": True,
     }
     new = {
         "id": "new",
@@ -116,6 +126,8 @@ def test_recovery_precedes_pending(jobs_root, monkeypatch, caplog):
         "scope": [],
         "repo_root": str(jobs_root),
         "base_branch": "main",
+        "test_cmd": ["true"],
+        "skip_tests": True,
     }
     (jobs_root / "running" / "orphan.json").write_text(json.dumps(orphan))
     (jobs_root / "pending" / "new.json").write_text(json.dumps(new))
@@ -126,11 +138,10 @@ def test_recovery_precedes_pending(jobs_root, monkeypatch, caplog):
     assert msgs.index("recovering orphan") < msgs.index("picked up new")
 
 
-# ---------- B2 outcome shape (status.txt + diff.patch) -------------------
+# ---------- B2 outcome shape --------------------------------------------
 
 
 def test_process_writes_ok_status_and_diff(jobs_root, monkeypatch):
-    """A non-empty diff from the model → status `ok`."""
     canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
     _stub_transformation(monkeypatch, result=canned)
     _write_pending(jobs_root, "job-ok")
@@ -143,7 +154,6 @@ def test_process_writes_ok_status_and_diff(jobs_root, monkeypatch):
 
 
 def test_process_writes_model_declined_on_empty_diff(jobs_root, monkeypatch):
-    """An empty diff from the model → status `model_declined`."""
     _stub_transformation(monkeypatch, result="")
     _write_pending(jobs_root, "job-decline")
     worker.tick()
@@ -155,8 +165,6 @@ def test_process_writes_model_declined_on_empty_diff(jobs_root, monkeypatch):
 
 
 def test_process_writes_error_status_when_transformation_raises(jobs_root, monkeypatch):
-    """Any exception during the model handoff → status `error:<class>: <msg>`."""
-
     def boom(spec, scope, repo_root):
         raise ValueError("repo_root is not a directory: /nope")
 
@@ -173,11 +181,10 @@ def test_process_writes_error_status_when_transformation_raises(jobs_root, monke
     assert not (out / "branch.txt").exists()
 
 
-# ---------- B3 git push step --------------------------------------------
+# ---------- B3 git push -------------------------------------------------
 
 
 def test_process_writes_branch_txt_on_successful_push(jobs_root, monkeypatch):
-    """Successful push → branch.txt holds `rae-local-agent/<id>`."""
     canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
     _stub_transformation(monkeypatch, result=canned)
     _write_pending(jobs_root, "job-push")
@@ -188,8 +195,8 @@ def test_process_writes_branch_txt_on_successful_push(jobs_root, monkeypatch):
     assert (out / "branch.txt").read_text() == "rae-local-agent/job-push\n"
 
 
-def test_process_calls_git_with_record_fields(jobs_root, monkeypatch):
-    """The record's base_branch, repo_root, and spec reach git_ops."""
+def test_process_passes_record_fields_through_to_git_ops(jobs_root, monkeypatch):
+    """The record's base_branch, repo_root, test_cmd, spec reach git_ops."""
     canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
     _stub_transformation(monkeypatch, result=canned)
     seen: dict = {}
@@ -200,6 +207,7 @@ def test_process_calls_git_with_record_fields(jobs_root, monkeypatch):
         "job-fields",
         spec="rename foo",
         repo_root=str(jobs_root),
+        test_cmd=["make", "test"],
     )
     worker.tick()
 
@@ -208,10 +216,10 @@ def test_process_calls_git_with_record_fields(jobs_root, monkeypatch):
     assert seen["new_branch"] == "rae-local-agent/job-fields"
     assert seen["commit_message"] == "rename foo"
     assert seen["diff_text"] == canned
+    assert seen["test_cmd"] == ["make", "test"]
 
 
 def test_process_refuses_dirty_tree_without_calling_model(jobs_root, monkeypatch):
-    """Dirty target repo → `error:dirty_tree`, no model call, no branch."""
     monkeypatch.setattr(git_ops, "is_clean", lambda _repo_root: False)
 
     calls = []
@@ -228,11 +236,10 @@ def test_process_refuses_dirty_tree_without_calling_model(jobs_root, monkeypatch
     assert (out / "status.txt").read_text() == "error:dirty_tree\n"
     assert (out / "diff.patch").read_text() == ""
     assert not (out / "branch.txt").exists()
-    assert calls == []  # model was NOT called
+    assert calls == []
 
 
 def test_process_writes_error_status_on_push_failure(jobs_root, monkeypatch):
-    """git_ops failures surface as error:GitError in status.txt."""
     canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
     _stub_transformation(monkeypatch, result=canned)
 
@@ -248,6 +255,55 @@ def test_process_writes_error_status_on_push_failure(jobs_root, monkeypatch):
     assert status.startswith("error:GitError:")
     assert "remote hung up" in status
     assert not (out / "branch.txt").exists()
-    # diff.patch is NOT written when the pipeline bails out — the
-    # branch wasn't landed, so the on-disk diff would be misleading.
     assert (out / "diff.patch").read_text() == ""
+
+
+# ---------- B4 test gate ------------------------------------------------
+
+
+def test_process_routes_to_failed_dir_on_tests_failed(jobs_root, monkeypatch):
+    """TestsFailedError → status `tests_failed`, record lands in failed/<id>/."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
+    _stub_transformation(monkeypatch, result=canned)
+
+    def tests_failed(**_):
+        raise git_ops.TestsFailedError("FAILED tests/test_foo.py\n1 failed in 0.3s\n")
+
+    monkeypatch.setattr(git_ops, "branch_and_push", tests_failed)
+    _write_pending(jobs_root, "job-tests-fail")
+    worker.tick()
+
+    out = jobs_root / "failed" / "job-tests-fail"
+    assert (out / "job.json").exists()
+    assert (out / "status.txt").read_text() == "tests_failed\n"
+    assert (out / "diff.patch").read_text() == canned  # diff retained for debugging
+    assert "1 failed in 0.3s" in (out / "log.txt").read_text()
+    assert not (out / "branch.txt").exists()
+    # The done/ dir should NOT have been touched.
+    assert not (jobs_root / "done" / "job-tests-fail").exists()
+
+
+def test_process_passes_none_test_cmd_when_skip_tests_true(jobs_root, monkeypatch):
+    """skip_tests=True → test_cmd arrives at git_ops as None."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
+    _stub_transformation(monkeypatch, result=canned)
+    seen: dict = {}
+    monkeypatch.setattr(git_ops, "branch_and_push", lambda **kw: seen.update(kw))
+
+    _write_pending(jobs_root, "job-skip", skip_tests=True)
+    worker.tick()
+
+    assert seen["test_cmd"] is None
+
+
+def test_process_passes_default_test_cmd_when_skip_tests_false(jobs_root, monkeypatch):
+    """Default record (skip_tests=False) → test_cmd is forwarded as the list."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
+    _stub_transformation(monkeypatch, result=canned)
+    seen: dict = {}
+    monkeypatch.setattr(git_ops, "branch_and_push", lambda **kw: seen.update(kw))
+
+    _write_pending(jobs_root, "job-with-tests")
+    worker.tick()
+
+    assert seen["test_cmd"] == ["uv", "run", "pytest", "-q"]

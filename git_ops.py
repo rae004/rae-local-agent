@@ -8,9 +8,9 @@ Two concerns:
 - `branch_and_push(...)` — take a diff produced by `transform.py`, land
   it as a pushed branch named `rae-local-agent/<job-id>` on the target
   repo's origin. Uses `git worktree add` so the user's active checkout
-  is never touched. The worktree is created in a tempdir, used, and
-  removed; failure of any step raises so the caller writes an
-  `error:<msg>` status.
+  is never touched. If `test_cmd` is given (B4), runs it in the worktree
+  between apply and commit; a non-zero exit raises `TestsFailedError`
+  and nothing is pushed.
 
 Why subprocess over a git library: no new dep, straight-line reads, and
 the error messages come back as git's own stderr — which is exactly
@@ -34,6 +34,14 @@ class GitError(RuntimeError):
     """A git subprocess returned non-zero. The message carries stderr."""
 
 
+class TestsFailedError(RuntimeError):
+    """Test command returned non-zero. `.log` holds the combined output."""
+
+    def __init__(self, log: str):
+        super().__init__("test command failed")
+        self.log = log
+
+
 def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     """Run git, raise GitError on non-zero with stderr as the message."""
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
@@ -55,15 +63,21 @@ def branch_and_push(
     new_branch: str,
     diff_text: str,
     commit_message: str,
+    test_cmd: list[str] | None = None,
 ) -> None:
     """Land a diff as a pushed branch on origin, isolated via worktree.
 
     Steps: fetch origin/<base>, create a worktree with a fresh branch
-    rooted at origin/<base>, write the diff, `git apply`, add+commit
-    with a baked-in author, push -u origin <new_branch>. Any failure
-    raises GitError; the worktree is cleaned up either way.
+    rooted at origin/<base>, write the diff, `git apply`. If `test_cmd`
+    is given, run it in the worktree with stderr merged into stdout —
+    a non-zero exit raises `TestsFailedError` with the combined output
+    as `.log` and nothing is pushed. On pass, add+commit with a baked-
+    in author, push `-u origin <new_branch>`.
 
-    The user's active checkout in repo_root is not touched.
+    The user's active checkout in `repo_root` is not touched. The
+    worktree and the local `<new_branch>` ref are both cleaned up on
+    exit regardless of outcome — on success the branch now lives on
+    origin, on failure nothing of value is lost.
     """
     _run(["git", "fetch", "origin", base_branch], cwd=repo_root)
 
@@ -89,6 +103,17 @@ def branch_and_push(
             _run(["git", "apply", str(patch)], cwd=wt)
             patch.unlink()
 
+            if test_cmd is not None:
+                tr = subprocess.run(
+                    test_cmd,
+                    cwd=wt,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                if tr.returncode != 0:
+                    raise TestsFailedError(tr.stdout)
+
             _run(["git", "add", "-A"], cwd=wt)
             _run(
                 [
@@ -105,11 +130,17 @@ def branch_and_push(
             )
             _run(["git", "push", "-u", "origin", new_branch], cwd=wt)
         finally:
-            # Worktree removal does not delete the branch — intentional:
-            # if push succeeded the branch now lives on origin; if push
-            # failed the local branch is leftover and the next run with
-            # a fresh job-id gets a fresh branch name anyway.
             _run(
                 ["git", "worktree", "remove", "--force", str(wt)],
                 cwd=repo_root,
+            )
+            # Drop the local branch ref: on success it exists on origin,
+            # on failure (test gate, push error) it was never pushed.
+            # Leaving them would clutter the user's branch listing over
+            # time. Silent on error — the branch may not exist if worktree
+            # add itself failed.
+            subprocess.run(
+                ["git", "branch", "-D", new_branch],
+                cwd=repo_root,
+                capture_output=True,
             )

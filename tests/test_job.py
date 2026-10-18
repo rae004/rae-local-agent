@@ -79,3 +79,23 @@ def test_finalize_done_moves_record_into_output_dir(jobs_root):
     assert new.read_text() == '{"id":"x"}'
     assert not src.exists()
     assert (out / "diff.patch").read_text() == "..."
+
+
+def test_failed_job_dir_builds_path(jobs_root):
+    assert job.failed_job_dir("y") == jobs_root / "failed" / "y"
+
+
+def test_finalize_failed_moves_record_into_failed_output_dir(jobs_root):
+    """Same atomic semantics as finalize_done, but into failed/<id>/."""
+    out = jobs_root / "failed" / "y"
+    out.mkdir()
+    (out / "log.txt").write_text("tests failed")
+
+    src = jobs_root / "running" / "y.json"
+    src.write_text('{"id":"y"}')
+
+    new = job.finalize_failed(src)
+    assert new == out / "job.json"
+    assert new.read_text() == '{"id":"y"}'
+    assert not src.exists()
+    assert (out / "log.txt").read_text() == "tests failed"
