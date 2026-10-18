@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/rae004/rae-local-agent/compare/v0.4.0...v0.5.0) (2026-10-18)
+
+
+### Features
+
+* open a draft PR after push (B5) ([#14](https://github.com/rae004/rae-local-agent/issues/14)) ([d37826f](https://github.com/rae004/rae-local-agent/commit/d37826fcb1b3fb6071b30a87ecd2dce3dd60765d))
+
 ## [0.4.0](https://github.com/rae004/rae-local-agent/compare/v0.3.0...v0.4.0) (2026-10-18)
 
 
