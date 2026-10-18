@@ -121,11 +121,21 @@ See `server.py`'s module docstring for the long version.
 - **Spec authoring matters.** The worker interprets specs literally.
   Spell out which cases to touch and which to leave alone.
 
-## Tests
+## Development
+
+Lint, format, and test — the same three checks CI runs on every PR:
 
 ```bash
+uv run ruff check .
+uv run ruff format --check .
 uv run pytest
 ```
+
+To auto-fix: `uv run ruff check --fix .` and `uv run ruff format .`.
+
+Commits use [Conventional Commits](https://www.conventionalcommits.org/)
+(`feat:`, `fix:`, `chore:`, …) — release-please reads them to open release PRs
+that bump the version in `pyproject.toml` and update `CHANGELOG.md`.
 
 ## License
 
