@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/rae004/rae-local-agent/compare/v0.6.0...v0.7.0) (2026-10-18)
+
+
+### Features
+
+* systemd user service for the worker (B7) ([#18](https://github.com/rae004/rae-local-agent/issues/18)) ([d4953ac](https://github.com/rae004/rae-local-agent/commit/d4953acf4cdb61580800e7b9fad633cbbe0e4323))
+
 ## [0.6.0](https://github.com/rae004/rae-local-agent/compare/v0.5.0...v0.6.0) (2026-10-18)
 
 
