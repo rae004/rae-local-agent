@@ -24,9 +24,17 @@ def test_make_job_record_shape(tmp_path: pathlib.Path) -> None:
     assert rec["spec"] == "do X"
     assert rec["scope"] == ["f.py", "g.py"]
     assert rec["repo_root"] == str(repo.resolve())
+    assert rec["base_branch"] == "main"  # default
     assert "T" in rec["created_at"]  # ISO 8601
     ms, _, suffix = rec["id"].partition("-")
     assert ms.isdigit() and len(ms) == 13 and len(suffix) == 6
+
+
+def test_make_job_record_accepts_custom_base_branch(tmp_path: pathlib.Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rec = _make_job_record("do X", ["f.py"], str(repo), base_branch="develop")
+    assert rec["base_branch"] == "develop"
 
 
 def test_make_job_record_rejects_missing_repo() -> None:

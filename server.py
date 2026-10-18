@@ -89,7 +89,12 @@ async def apply_transformation(
 # MILESTONES.md for the slice shape.
 
 
-def _make_job_record(spec: str, scope: list[str], repo_root: str) -> dict:
+def _make_job_record(
+    spec: str,
+    scope: list[str],
+    repo_root: str,
+    base_branch: str = "main",
+) -> dict:
     """Build the on-disk job record. Raises if repo_root is not a directory."""
     root = Path(repo_root).resolve()
     if not root.is_dir():
@@ -100,6 +105,7 @@ def _make_job_record(spec: str, scope: list[str], repo_root: str) -> dict:
         "spec": spec,
         "scope": scope,
         "repo_root": str(root),
+        "base_branch": base_branch,
     }
 
 
@@ -124,11 +130,19 @@ async def enqueue_job(
         Field(
             description=(
                 "Absolute path to the target repository root. `scope` paths "
-                "resolve against this. The worker will branch off this "
-                "repo's current HEAD and push a draft PR."
+                "resolve against this. The worker branches off `base_branch` "
+                "of this repo and pushes a draft PR."
             )
         ),
     ],
+    base_branch: Annotated[
+        str,
+        Field(
+            description=(
+                "Base branch on the target repo's `origin` to branch off. Defaults to `main`."
+            )
+        ),
+    ] = "main",
 ) -> str:
     """Enqueue a code-transformation job for the background worker.
 
@@ -140,7 +154,7 @@ async def enqueue_job(
     to be reviewed inline — e.g. a type-hint sweep that can wait for a draft
     PR, or a multi-file rename to come back during the next review window.
     """
-    record = _make_job_record(spec, scope, repo_root)
+    record = _make_job_record(spec, scope, repo_root, base_branch)
     return job.write_pending(record)
 
 
