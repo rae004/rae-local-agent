@@ -18,11 +18,53 @@ a 32B coder can do locally.
 ## Status
 
 - **Phase A**: one tool, advisory, one-shot per file. Done.
-- **Phase B** (nearly done): job queue, model handoff, git branch,
-  test gate, draft PR, status tools, and systemd packaging landed.
-  Remaining: B8, an end-to-end validation on a real target repo. See
-  `MILESTONES.md` for the slice plan.
+- **Phase B**: queue, model handoff, worktree, test gate, draft PR,
+  status tools, systemd packaging, and a documented first real run
+  against a real target repo. Done. One known gate bug tracked in
+  [#22](https://github.com/rae004/rae-local-agent/issues/22) — see
+  [First real run](#first-real-run) below for the honest version.
+  See `MILESTONES.md` for the slice plan.
 - **Phase C** (planned): standing task feed from GitHub issues.
+
+## First real run
+
+Phase B closeout was an end-to-end validation against
+[rae-budget](https://github.com/rae004/rae-budget): a mechanical sweep
+adding `-> ResponseReturnValue` to every Flask route handler. Three
+draft PRs, all enqueued from a Claude Code session, worker handled
+sequentially while the session moved on:
+
+- [rae-budget#236](https://github.com/rae004/rae-budget/pull/236) —
+  `backend/app/routes/categories.py`. The first real run. Title was
+  the full dense multi-paragraph spec, which blew past GitHub's
+  title display. Prompted the `title`/`body` override feature
+  ([#20](https://github.com/rae004/rae-local-agent/pull/20)).
+- [rae-budget#237](https://github.com/rae004/rae-budget/pull/237) —
+  `backend/app/routes/bills.py`. First PR shaped with the new params:
+  title `chore(bills): annotate route returns with ResponseReturnValue`,
+  body a short reviewer-facing paragraph. The dense spec goes into
+  the commit message, not the title.
+- [rae-budget#238](https://github.com/rae004/rae-budget/pull/238) —
+  `backend/app/routes/bill_templates.py`. Peer to #237, enqueued in
+  the same breath — exercises queue serialization against a real
+  target.
+
+### Honest caveat on #237 and #238
+
+Both shipped with `skip_tests=true`. The B4 test gate as implemented
+is theater: it runs `uv run pytest -q` inside the worktree but
+inherits the systemd service's uv context, so `uv` resolves to
+rae-local-agent's `.venv` instead of the target repo's. On any target
+whose dependencies aren't a subset of rae-local-agent's (which is
+most of them), collection errors on the target's `conftest.py` and
+the gate fails every job regardless of the diff.
+
+Tracked in
+[#22](https://github.com/rae004/rae-local-agent/issues/22). Must fix
+before Phase C — a gate that can't tell a passing diff from a failing
+one isn't a gate. The two diffs here are pure annotations and were
+reviewed by hand before merge, so the shortcut was safe for this
+specific run.
 
 ## Requirements
 
