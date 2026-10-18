@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/rae004/rae-local-agent/compare/v0.5.0...v0.6.0) (2026-10-18)
+
+
+### Features
+
+* get_job_status and list_jobs MCP tools (B6) ([#16](https://github.com/rae004/rae-local-agent/issues/16)) ([5446cfb](https://github.com/rae004/rae-local-agent/commit/5446cfb4ffa72d1a9b30ba148896dca9be34ed6e))
+
 ## [0.5.0](https://github.com/rae004/rae-local-agent/compare/v0.4.0...v0.5.0) (2026-10-18)
 
 
