@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/rae004/rae-local-agent/compare/v0.8.2...v0.9.0) (2026-10-18)
+
+
+### Features
+
+* group_id on enqueue_job to land a batch as commits on one PR (B9) ([#27](https://github.com/rae004/rae-local-agent/issues/27)) ([caac55b](https://github.com/rae004/rae-local-agent/commit/caac55b9afcc1e81dd24d7f46cdf619b04689098))
+
 ## [0.8.2](https://github.com/rae004/rae-local-agent/compare/v0.8.1...v0.8.2) (2026-10-18)
 
 
