@@ -274,3 +274,43 @@ def create_draft_pr(repo_root: Path, branch: str, title: str, body: str) -> str:
     if result.returncode != 0:
         raise GhError(f"gh pr create failed: {result.stderr.strip() or result.stdout.strip()}")
     return result.stdout.strip()
+
+
+def branch_exists_on_origin(repo_root: Path, branch: str) -> bool:
+    """True iff `origin` has a ref at `refs/heads/<branch>`.
+
+    Used by the worker to tell "first job of a group" (no branch yet,
+    open a PR) from "later job of a group" (branch there, add a commit).
+    `git ls-remote` is a cheap read-only probe; non-zero exit is treated
+    as "no network / no branch" — we return False and let the caller try
+    to push the branch fresh.
+    """
+    result = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin", branch],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return False
+    return result.stdout.strip() != ""
+
+
+def pr_url_for_branch(repo_root: Path, branch: str) -> str | None:
+    """Return the open PR URL for `branch` on origin, or None if none.
+
+    Lets a later-in-group job report back the existing PR URL instead
+    of trying to open a second PR for the same branch. `gh pr view`
+    exits non-zero when no PR is associated with the ref — we treat
+    that as "no PR" and return None.
+    """
+    result = subprocess.run(
+        ["gh", "pr", "view", branch, "--json", "url", "--jq", ".url"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    url = result.stdout.strip()
+    return url or None

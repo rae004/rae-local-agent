@@ -29,6 +29,10 @@ def jobs_root(tmp_path, monkeypatch):
     monkeypatch.setattr(git_ops, "is_clean", lambda _repo_root: True)
     monkeypatch.setattr(git_ops, "branch_and_push", lambda **_: None)
     monkeypatch.setattr(git_ops, "create_draft_pr", lambda **_: "https://example/pull/stub")
+    # Default group routing: no branch exists, no existing PR. Group-aware
+    # tests override these.
+    monkeypatch.setattr(git_ops, "branch_exists_on_origin", lambda _repo_root, _branch: False)
+    monkeypatch.setattr(git_ops, "pr_url_for_branch", lambda _repo_root, _branch: None)
     return tmp_path
 
 
@@ -42,6 +46,7 @@ def _write_pending(
     test_cmd=None,
     title: str | None = None,
     body: str | None = None,
+    group_id: str | None = None,
 ):
     """Drop a well-formed job record into pending/."""
     rec = {
@@ -54,6 +59,7 @@ def _write_pending(
         "skip_tests": skip_tests,
         "title": title,
         "body": body,
+        "group_id": group_id,
     }
     (jobs_root / "pending" / f"{jid}.json").write_text(json.dumps(rec))
     return rec
@@ -441,3 +447,108 @@ def test_process_errors_but_preserves_branch_when_pr_fails_after_push(jobs_root,
     # Branch IS pushed, so branch.txt is retained for manual-PR recovery.
     assert (out / "branch.txt").read_text() == "rae-local-agent/job-pr-fail\n"
     assert not (out / "pr_url.txt").exists()
+
+
+# ---------- B9 group_id routing -----------------------------------------
+
+
+def test_first_in_group_uses_group_branch_name(jobs_root, monkeypatch):
+    """First job in a group: branch is `rae-local-agent/<group_id>`, PR opens."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
+    _stub_transformation(monkeypatch, result=canned)
+    push_seen: dict = {}
+    monkeypatch.setattr(git_ops, "branch_and_push", lambda **kw: push_seen.update(kw))
+    # No branch yet — first in group.
+    monkeypatch.setattr(git_ops, "branch_exists_on_origin", lambda _r, _b: False)
+    pr_seen: dict = {}
+    monkeypatch.setattr(
+        git_ops,
+        "create_draft_pr",
+        lambda **kw: pr_seen.update(kw) or "https://example/pull/42",
+    )
+
+    _write_pending(jobs_root, "first-in-group", group_id="routes-sweep")
+    worker.tick()
+
+    assert push_seen["new_branch"] == "rae-local-agent/routes-sweep"
+    # First-in-group bases off the record's base_branch, not the group branch.
+    assert push_seen["base_branch"] == "main"
+    assert pr_seen["branch"] == "rae-local-agent/routes-sweep"
+
+    out = jobs_root / "done" / "first-in-group"
+    assert (out / "status.txt").read_text() == "ok\n"
+    assert (out / "branch.txt").read_text() == "rae-local-agent/routes-sweep\n"
+    assert (out / "pr_url.txt").read_text() == "https://example/pull/42\n"
+
+
+def test_later_in_group_appends_to_existing_branch_and_reuses_pr(jobs_root, monkeypatch):
+    """Later-in-group: base off the group branch, reuse the open PR URL."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
+    _stub_transformation(monkeypatch, result=canned)
+    push_seen: dict = {}
+    monkeypatch.setattr(git_ops, "branch_and_push", lambda **kw: push_seen.update(kw))
+    # Branch already there → later-in-group path.
+    monkeypatch.setattr(git_ops, "branch_exists_on_origin", lambda _r, _b: True)
+    monkeypatch.setattr(git_ops, "pr_url_for_branch", lambda _r, _b: "https://example/pull/99")
+    # If this is called, the test fails loudly — later-in-group must NOT
+    # try to open a fresh PR when one already exists.
+    monkeypatch.setattr(
+        git_ops,
+        "create_draft_pr",
+        lambda **_: pytest.fail("create_draft_pr must not be called for later-in-group"),
+    )
+
+    _write_pending(jobs_root, "second-in-group", group_id="routes-sweep")
+    worker.tick()
+
+    assert push_seen["new_branch"] == "rae-local-agent/routes-sweep"
+    # Later-in-group bases the new commit on the existing branch, not `main`.
+    assert push_seen["base_branch"] == "rae-local-agent/routes-sweep"
+
+    out = jobs_root / "done" / "second-in-group"
+    assert (out / "status.txt").read_text() == "ok\n"
+    assert (out / "pr_url.txt").read_text() == "https://example/pull/99\n"
+
+
+def test_later_in_group_falls_back_to_create_pr_when_none_found(jobs_root, monkeypatch):
+    """Branch exists but gh can't find a PR (closed/deleted): open a fresh one."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
+    _stub_transformation(monkeypatch, result=canned)
+    monkeypatch.setattr(git_ops, "branch_exists_on_origin", lambda _r, _b: True)
+    monkeypatch.setattr(git_ops, "pr_url_for_branch", lambda _r, _b: None)
+    pr_seen: dict = {}
+    monkeypatch.setattr(
+        git_ops,
+        "create_draft_pr",
+        lambda **kw: pr_seen.update(kw) or "https://example/pull/recover",
+    )
+
+    _write_pending(jobs_root, "recover-group", group_id="routes-sweep")
+    worker.tick()
+
+    assert pr_seen["branch"] == "rae-local-agent/routes-sweep"
+
+    out = jobs_root / "done" / "recover-group"
+    assert (out / "status.txt").read_text() == "ok\n"
+    assert (out / "pr_url.txt").read_text() == "https://example/pull/recover\n"
+
+
+def test_ungrouped_job_keeps_per_job_branch_name(jobs_root, monkeypatch):
+    """No group_id → branch is `rae-local-agent/<job-id>`, same as before B9."""
+    canned = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n"
+    _stub_transformation(monkeypatch, result=canned)
+    push_seen: dict = {}
+    monkeypatch.setattr(git_ops, "branch_and_push", lambda **kw: push_seen.update(kw))
+
+    # Should NOT call the probe when group_id is absent.
+    monkeypatch.setattr(
+        git_ops,
+        "branch_exists_on_origin",
+        lambda _r, _b: pytest.fail("branch_exists_on_origin called for an ungrouped job"),
+    )
+
+    _write_pending(jobs_root, "classic-job")  # group_id defaults to None
+    worker.tick()
+
+    assert push_seen["new_branch"] == "rae-local-agent/classic-job"
+    assert push_seen["base_branch"] == "main"

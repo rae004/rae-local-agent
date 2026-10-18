@@ -30,6 +30,7 @@ Shape of the escalation path:
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -41,6 +42,12 @@ import job
 from transform import run_transformation
 
 mcp = MCPServer("local-agent")
+
+# A valid branch component (and git-safe name): lowercase alnum + hyphens,
+# must start with alnum, up to 63 chars. Chosen to be legible in GitHub's
+# branch list and short enough to compose with `rae-local-agent/<group_id>`
+# without blowing past git's practical ref-length limits.
+_GROUP_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
 @mcp.tool()
@@ -105,11 +112,18 @@ def _make_job_record(
     skip_tests: bool = False,
     title: str | None = None,
     body: str | None = None,
+    group_id: str | None = None,
 ) -> dict:
-    """Build the on-disk job record. Raises if repo_root is not a directory."""
+    """Build the on-disk job record. Raises if repo_root is not a directory
+    or if `group_id` is given but malformed."""
     root = Path(repo_root).resolve()
     if not root.is_dir():
         raise ValueError(f"repo_root is not a directory: {repo_root}")
+    if group_id is not None and not _GROUP_ID_PATTERN.match(group_id):
+        raise ValueError(
+            f"group_id must match {_GROUP_ID_PATTERN.pattern!r} "
+            f"(lowercase alnum + hyphens, up to 63 chars, starts with alnum); got {group_id!r}"
+        )
     return {
         "id": job.new_id(),
         "created_at": datetime.now(UTC).isoformat(),
@@ -121,6 +135,7 @@ def _make_job_record(
         "skip_tests": skip_tests,
         "title": title,
         "body": body,
+        "group_id": group_id,
     }
 
 
@@ -200,6 +215,21 @@ async def enqueue_job(
             )
         ),
     ] = None,
+    group_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional group handle. Jobs sharing a `group_id` land as "
+                "sequential commits on the same `rae-local-agent/<group_id>` "
+                "branch and show up as one draft PR instead of one PR per "
+                "job. The FIRST job in a group opens the PR and its "
+                "`title`/`body` shape it; later jobs are commits on that "
+                "same PR and their `title`/`body` becomes the commit "
+                "subject/body only (the PR title/body is not touched). "
+                "Must match `^[a-z0-9][a-z0-9-]{0,62}$`."
+            )
+        ),
+    ] = None,
 ) -> str:
     """Enqueue a code-transformation job for the background worker.
 
@@ -213,7 +243,8 @@ async def enqueue_job(
 
     `spec` is the directive the local model follows literally; prefer dense,
     unambiguous phrasing. `title` and `body` shape the PR and commit for a
-    human reviewer and are what you tune for readability.
+    human reviewer and are what you tune for readability. Pass a `group_id`
+    across a batch of related jobs to land them as commits on one PR.
     """
     record = _make_job_record(
         spec,
@@ -224,6 +255,7 @@ async def enqueue_job(
         skip_tests=skip_tests,
         title=title,
         body=body,
+        group_id=group_id,
     )
     return job.write_pending(record)
 

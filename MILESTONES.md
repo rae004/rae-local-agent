@@ -158,6 +158,34 @@ the target.
 See the "First real run" section of the README for the readable
 version.
 
+### B9 — Group jobs into one PR
+
+Phase B assumed one PR per job. For a mechanical sweep across N files
+that is a nuisance: N PRs clog the review queue and lose the "these
+belong together" signal. B9 adds an explicit `group_id` on
+`enqueue_job` so a batch of related jobs lands as sequential commits
+on one `rae-local-agent/<group_id>` branch + one draft PR.
+
+Routing per job:
+
+- No `group_id` → classic shape (per-job branch, per-job PR).
+- `group_id` set, branch not on origin → **first job of the group**:
+  branches off `base_branch`, opens the draft PR with this job's
+  `title`/`body`.
+- `group_id` set, branch on origin → **later job of the group**: bases
+  the new commit on the existing branch, pushes, surfaces the
+  already-open PR's URL. First-job-wins on PR title/body; later jobs
+  are commits only.
+
+`group_id` format: `^[a-z0-9][a-z0-9-]{0,62}$`. Enforced at the MCP
+tool boundary with a clear error. Readable in GitHub's branch list,
+safe as a git ref component.
+
+**Done means:** a batch of jobs sharing a `group_id` from a single
+Claude Code session produces exactly one draft PR with one commit
+per job, and the status tool surfaces the shared PR URL for every
+job in the group.
+
 ---
 
 Beyond Phase B is Phase C: a standing feed of jobs sourced from GitHub

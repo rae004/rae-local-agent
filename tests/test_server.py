@@ -85,6 +85,61 @@ def test_make_job_record_title_and_body_overrides_pass_through(tmp_path: pathlib
     assert rec["body"] == "Reviewer-facing context."
 
 
+# ---------- group_id (B9) -----------------------------------------------
+
+
+def test_make_job_record_group_id_default_is_none(tmp_path: pathlib.Path) -> None:
+    """Omitted group_id → stored as None; worker falls back to per-job branch."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rec = _make_job_record("do X", ["f.py"], str(repo))
+    assert rec["group_id"] is None
+
+
+def test_make_job_record_group_id_passes_through(tmp_path: pathlib.Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rec = _make_job_record("do X", ["f.py"], str(repo), group_id="routes-sweep")
+    assert rec["group_id"] == "routes-sweep"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "ROUTES",  # uppercase
+        "routes_sweep",  # underscore
+        "routes/sweep",  # slash
+        "routes.sweep",  # dot
+        "-routes",  # leading hyphen
+        "",  # empty
+        "a" * 64,  # too long
+        "routes sweep",  # whitespace
+    ],
+)
+def test_make_job_record_rejects_malformed_group_id(tmp_path: pathlib.Path, value: str) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    with pytest.raises(ValueError, match="group_id must match"):
+        _make_job_record("do X", ["f.py"], str(repo), group_id=value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "a",
+        "routes-sweep",
+        "type-hints-batch-3",
+        "0abc",
+        "a" * 63,
+    ],
+)
+def test_make_job_record_accepts_valid_group_ids(tmp_path: pathlib.Path, value: str) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rec = _make_job_record("do X", ["f.py"], str(repo), group_id=value)
+    assert rec["group_id"] == value
+
+
 # ---------- B6 status tools ---------------------------------------------
 #
 # The MCP tool decorators wrap the inner coroutine. We call them via
