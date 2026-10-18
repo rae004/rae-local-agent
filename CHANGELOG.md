@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/rae004/rae-local-agent/compare/v0.8.0...v0.8.1) (2026-10-18)
+
+
+### Documentation
+
+* B8 "First real run" — close out Phase B with the three rae-budget PRs ([#23](https://github.com/rae004/rae-local-agent/issues/23)) ([daaed0c](https://github.com/rae004/rae-local-agent/commit/daaed0c71b0fa77318d1e5969a904a3e33c72bd4))
+
 ## [0.8.0](https://github.com/rae004/rae-local-agent/compare/v0.7.0...v0.8.0) (2026-10-18)
 
 
