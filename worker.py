@@ -1,23 +1,40 @@
-"""Phase B worker (B1 walking skeleton).
+"""Phase B worker (B2 — model handoff).
 
-Watches `jobs/pending/`, picks up jobs by moving them to `jobs/running/`,
-logs them, and moves them to `jobs/done/`. Each move is an atomic
-`os.rename`, so a crash leaves the job in exactly one directory. On every
+Watches `jobs/pending/`, picks jobs up, runs the model handoff, writes
+the diff and a one-line status into a per-job directory under
+`jobs/done/<id>/`. Each move between queue directories is an atomic
+`os.rename`, so a crash leaves the job in exactly one state. On every
 tick, anything already in `jobs/running/` is reconciled first — treated
-as a recovery of a prior worker that died mid-process and finished to
+as a recovery of a prior worker that died mid-process, finished to
 `done/`.
 
-No model handoff, no git, no PR yet — those arrive in B2+. This milestone
-proves the queue mechanic in isolation.
+Shape of a done job after B2:
+
+    jobs/done/<id>/
+        job.json       # the original record (moved from running/)
+        diff.patch     # the model-produced unified diff (possibly empty)
+        status.txt     # one line: `ok | model_declined | error:<msg>`
+
+Partial-crash semantics: artifacts are written before the final rename
+of `running/<id>.json` → `done/<id>/job.json`. If the worker dies
+between the two, the next tick's recovery pass sees the record still
+in running/ and re-runs the transformation, overwriting the stale
+artifacts. The job is "complete" iff the record is in done/<id>/.
+
+Not yet in scope: git branch, test gate, draft PR (B3–B5).
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import signal
 import time
+from pathlib import Path
 
 import job
+from transform import run_transformation
 
 log = logging.getLogger("rae-local-agent.worker")
 
@@ -36,9 +53,44 @@ def _on_signal(_signum, _frame) -> None:
     log.info("stop requested")
 
 
-def process(path) -> None:
-    """Per-job work. B1 is a no-op; B2 fills this in with the model handoff."""
-    _ = path
+def _run_transformation_sync(spec: str, scope: list[str], repo_root: str) -> str:
+    """Sync wrapper so `process` doesn't have to be async. Walking-skeleton
+    style; if latency becomes a problem the whole loop can go async later."""
+    return asyncio.run(run_transformation(spec, scope, repo_root))
+
+
+def _status_for(diff: str) -> str:
+    """ok iff the model actually changed something; model_declined otherwise."""
+    return "ok" if diff else "model_declined"
+
+
+def process(path: Path) -> None:
+    """Run the transformation described by the job at `path` and write
+    diff.patch + status.txt into its done/<id>/ output dir.
+
+    Any exception is caught and recorded as `error:<msg>` in status.txt
+    rather than propagated — the queue invariant is "the worker never
+    gets stuck on a bad job." Failures still move to done/ in B2; the
+    failed/ bucket is reserved for B4's test gate.
+    """
+    jid = path.stem
+    out_dir = job.done_job_dir(jid)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        diff = _run_transformation_sync(
+            record["spec"],
+            record["scope"],
+            record["repo_root"],
+        )
+        status = _status_for(diff)
+    except Exception as e:
+        diff = ""
+        status = f"error:{type(e).__name__}: {e}"
+        log.exception("job %s failed", jid)
+    (out_dir / "diff.patch").write_text(diff, encoding="utf-8")
+    (out_dir / "status.txt").write_text(status + "\n", encoding="utf-8")
+    log.info("job %s %s", jid, status)
 
 
 def tick() -> int:
@@ -47,13 +99,13 @@ def tick() -> int:
     for p in job.iter_jobs(job.running_dir()):
         log.info("recovering %s", p.stem)
         process(p)
-        job.move(p, job.done_dir())
+        job.finalize_done(p)
         n += 1
     for p in job.iter_jobs(job.pending_dir()):
         log.info("picked up %s", p.stem)
         running_path = job.move(p, job.running_dir())
         process(running_path)
-        job.move(running_path, job.done_dir())
+        job.finalize_done(running_path)
         n += 1
     return n
 

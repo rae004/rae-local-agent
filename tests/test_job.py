@@ -59,3 +59,23 @@ def test_iter_jobs_sorted_filters_non_json(jobs_root):
     (d / "halfwritten.json.tmp").touch()
     result = job.iter_jobs(d)
     assert [p.name for p in result] == ["a.json", "b.json"]
+
+
+def test_done_job_dir_builds_path(jobs_root):
+    assert job.done_job_dir("abc") == jobs_root / "done" / "abc"
+
+
+def test_finalize_done_moves_record_into_output_dir(jobs_root):
+    """The record ends up at done/<id>/job.json alongside artifacts."""
+    out = jobs_root / "done" / "x"
+    out.mkdir()
+    (out / "diff.patch").write_text("...")
+
+    src = jobs_root / "running" / "x.json"
+    src.write_text('{"id":"x"}')
+
+    new = job.finalize_done(src)
+    assert new == out / "job.json"
+    assert new.read_text() == '{"id":"x"}'
+    assert not src.exists()
+    assert (out / "diff.patch").read_text() == "..."
