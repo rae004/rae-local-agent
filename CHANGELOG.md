@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/rae004/rae-local-agent/compare/v0.3.0...v0.4.0) (2026-10-18)
+
+
+### Features
+
+* test gate — tests_failed routes to failed/&lt;id&gt;/ (B4) ([#12](https://github.com/rae004/rae-local-agent/issues/12)) ([eba035a](https://github.com/rae004/rae-local-agent/commit/eba035a006c1418e38298718062f94ad487ca5f3))
+
 ## [0.3.0](https://github.com/rae004/rae-local-agent/compare/v0.2.0...v0.3.0) (2026-10-18)
 
 
