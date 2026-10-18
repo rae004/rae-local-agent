@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import difflib
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -209,7 +209,7 @@ def _make_job_record(spec: str, scope: list[str], repo_root: str) -> dict:
         raise ValueError(f"repo_root is not a directory: {repo_root}")
     return {
         "id": job.new_id(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "spec": spec,
         "scope": scope,
         "repo_root": str(root),
