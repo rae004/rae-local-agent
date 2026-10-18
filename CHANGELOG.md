@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/rae004/rae-local-agent/compare/v0.8.1...v0.8.2) (2026-10-18)
+
+
+### Bug Fixes
+
+* isolate test-subprocess env from the worker's uv context ([#22](https://github.com/rae004/rae-local-agent/issues/22)) ([#25](https://github.com/rae004/rae-local-agent/issues/25)) ([5f9afe6](https://github.com/rae004/rae-local-agent/commit/5f9afe63c43e93539fed56141103b96e3eda3c71))
+
 ## [0.8.1](https://github.com/rae004/rae-local-agent/compare/v0.8.0...v0.8.1) (2026-10-18)
 
 
