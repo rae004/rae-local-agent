@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/rae004/rae-local-agent/compare/v0.1.1...v0.2.0) (2026-10-18)
+
+
+### Features
+
+* worker runs transformations and writes diff.patch (B2) ([#8](https://github.com/rae004/rae-local-agent/issues/8)) ([6b3cf5c](https://github.com/rae004/rae-local-agent/commit/6b3cf5cec76bc8ea5aaf0b92198e0c1770785016))
+
 ## [0.1.1](https://github.com/rae004/rae-local-agent/compare/v0.1.0...v0.1.1) (2026-10-18)
 
 
