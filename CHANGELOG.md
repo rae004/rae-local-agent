@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/rae004/rae-local-agent/compare/v0.12.0...v0.13.0) (2026-10-19)
+
+
+### Features
+
+* C3 issue poller — enqueue + GitHub writes ([#38](https://github.com/rae004/rae-local-agent/issues/38)) ([6b3fc97](https://github.com/rae004/rae-local-agent/commit/6b3fc9792ab559143ea8d45bf991607ce6b61794))
+
 ## [0.12.0](https://github.com/rae004/rae-local-agent/compare/v0.11.0...v0.12.0) (2026-10-19)
 
 
