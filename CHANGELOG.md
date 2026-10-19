@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/rae004/rae-local-agent/compare/v0.10.0...v0.11.0) (2026-10-19)
+
+
+### Features
+
+* C1 issue poller — polling loop (read-only) ([#34](https://github.com/rae004/rae-local-agent/issues/34)) ([f73b721](https://github.com/rae004/rae-local-agent/commit/f73b721af031744993132bf8800043f4fa7acb7e))
+
 ## [0.10.0](https://github.com/rae004/rae-local-agent/compare/v0.9.1...v0.10.0) (2026-10-18)
 
 
