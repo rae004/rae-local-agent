@@ -300,16 +300,35 @@ systemctl --user daemon-reload
 systemctl --user restart rae-local-agent-worker
 ```
 
-### Phase C issue poller (read-only loop)
+### Phase C issue poller
 
-The repo also ships `systemd/rae-local-agent-issue-poller.service`.
-As of C1 it's a real long-running loop: every `poll_interval_seconds`
-it lists open issues on each configured repo whose labels match
-`label:local-agent -label:agent-queued -label:agent-invalid` and logs
-one line per issue. **No enqueueing yet, no labels or comments
-written** — that's C2 (parser) and C3 (enqueue).
+The repo ships `systemd/rae-local-agent-issue-poller.service`. As of
+C3, every `poll_interval_seconds` the poller:
 
-Config at `~/.config/rae-local-agent/repos.yaml` — format in
+1. Lists open issues on each configured repo whose labels match
+   `label:local-agent -label:agent-queued -label:agent-invalid`.
+2. Parses the YAML frontmatter + markdown prose from each issue body
+   (format in `PHASE_C_DESIGN.md` § "Issue → job translation").
+3. On parse success: adds `agent-queued`, writes the job to
+   `jobs/pending/`, posts a comment with the job id. The worker
+   picks the job up and opens a draft PR.
+4. On parse / enqueue failure: adds `agent-invalid`, posts a comment
+   with the error. Remove `agent-invalid` and fix the body to retry.
+
+Completion comment-back (status + PR URL on the issue) is C4.
+
+#### Required labels
+
+Each repo listed in `repos.yaml` must have these three labels
+created on it (`gh label create` or GitHub UI):
+
+- `local-agent` — the trigger; **the only one a human sets**.
+- `agent-queued` — poller sets this after enqueueing.
+- `agent-invalid` — poller sets this when parse or enqueue failed.
+
+#### Config
+
+`~/.config/rae-local-agent/repos.yaml` — format in
 `PHASE_C_DESIGN.md` § "Configuration". Minimal example:
 
 ```yaml
@@ -318,26 +337,19 @@ repos:
   rae004/rae-budget: /home/rae004/projects/rae-budget
 ```
 
-Dry-run against a config:
+#### Dry-run / enable
 
 ```bash
-uv run python issue_poller.py
-```
-
-A valid config logs `poller up with N repo(s), poll_interval=Ns`,
-runs ticks until SIGINT/SIGTERM, then exits zero. A missing or invalid
-config exits non-zero with an error line naming the offending field.
-A per-repo `gh` failure (auth, network) logs a `skipping <repo> this
-tick` warning and the loop keeps running — one bad repo doesn't take
-down the others.
-
-Enable alongside the worker:
-
-```bash
+uv run python issue_poller.py                # interactive foreground
 systemctl --user daemon-reload
 systemctl --user enable --now rae-local-agent-issue-poller
 journalctl --user -u rae-local-agent-issue-poller -f
 ```
+
+A missing or invalid config exits non-zero with an error line naming
+the offending field. A per-repo `gh` failure (auth, network) logs a
+`skipping <repo> this tick` warning and the loop keeps running — one
+bad repo doesn't take down the others.
 
 ## Why the rewrite protocol (not the diff protocol)
 
