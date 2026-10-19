@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/rae004/rae-local-agent/compare/v0.11.0...v0.12.0) (2026-10-19)
+
+
+### Features
+
+* C2 issue body parser ([#36](https://github.com/rae004/rae-local-agent/issues/36)) ([d0bf934](https://github.com/rae004/rae-local-agent/commit/d0bf934c5005770acfebf4df5c3a03a26ab57311))
+
 ## [0.11.0](https://github.com/rae004/rae-local-agent/compare/v0.10.0...v0.11.0) (2026-10-19)
 
 
