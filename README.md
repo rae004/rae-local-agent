@@ -303,28 +303,39 @@ systemctl --user restart rae-local-agent-worker
 ### Phase C issue poller
 
 The repo ships `systemd/rae-local-agent-issue-poller.service`. As of
-C3, every `poll_interval_seconds` the poller:
+C4, every `poll_interval_seconds` the poller does two passes per repo:
 
-1. Lists open issues on each configured repo whose labels match
-   `label:local-agent -label:agent-queued -label:agent-invalid`.
-2. Parses the YAML frontmatter + markdown prose from each issue body
+**Adopt pass** — issues matching
+`label:local-agent -label:agent-queued -label:agent-invalid`:
+
+1. Parses the YAML frontmatter + markdown prose from the issue body
    (format in `PHASE_C_DESIGN.md` § "Issue → job translation").
-3. On parse success: adds `agent-queued`, writes the job to
+2. On parse success: adds `agent-queued`, writes the job to
    `jobs/pending/`, posts a comment with the job id. The worker
    picks the job up and opens a draft PR.
-4. On parse / enqueue failure: adds `agent-invalid`, posts a comment
+3. On parse / enqueue failure: adds `agent-invalid`, posts a comment
    with the error. Remove `agent-invalid` and fix the body to retry.
 
-Completion comment-back (status + PR URL on the issue) is C4.
+**Completion pass** — issues matching
+`label:agent-queued -label:agent-complete`:
+
+1. Pulls the job id from the earlier `agent-queued` comment.
+2. If the job is still pending/running, waits for a future tick.
+3. If the job reached `done`/`failed`, posts a terminal comment
+   (shape per status: `ok` with PR URL + diff preview, `tests_failed`
+   with first 20 log lines, `model_declined` with a short note,
+   `error:...` verbatim) and adds `agent-complete`.
 
 #### Required labels
 
-Each repo listed in `repos.yaml` must have these three labels
+Each repo listed in `repos.yaml` must have these four labels
 created on it (`gh label create` or GitHub UI):
 
 - `local-agent` — the trigger; **the only one a human sets**.
 - `agent-queued` — poller sets this after enqueueing.
 - `agent-invalid` — poller sets this when parse or enqueue failed.
+- `agent-complete` — poller sets this after posting the terminal
+  comment with the result.
 
 #### Config
 

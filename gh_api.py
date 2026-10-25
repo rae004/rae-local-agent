@@ -1,12 +1,12 @@
 """Thin shim around the `gh` CLI for the issue poller.
 
 Keeps subprocess calls isolated so the poller's `tick` logic can be
-unit-tested with a mocked `list_pollable_issues` / `comment_on_issue`
-/ `add_label`. The `Issue` dataclass is intentionally smaller than a
-full GitHub issue — only the fields the poller reads.
+unit-tested with mocked wrappers. The `Issue` dataclass is intentionally
+smaller than a full GitHub issue — only the fields the poller reads.
 
-C1 added listing. C3 adds the two write-path calls (comment, label)
-the poller needs to adopt and reject issues.
+C1 added listing. C3 added the two write-path calls (comment, label).
+C4 adds completion-pass listing and a comments-reader so the poller can
+find the HTML job-id tag it dropped in C3.
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ from dataclasses import dataclass
 
 log = logging.getLogger("rae-local-agent.gh_api")
 
-# Issues the poller cares about: labeled `local-agent`, not yet
-# enqueued or rejected, and still open. GitHub search syntax; `-label:`
-# negates. Kept as a module constant so tests can import it rather than
-# duplicate the string.
+# Searches the poller runs. Kept at module scope so tests can import
+# them rather than duplicate the strings. GitHub search syntax; `-label:`
+# negates.
 POLL_SEARCH = "is:open label:local-agent -label:agent-queued -label:agent-invalid"
+COMPLETION_SEARCH = "label:agent-queued -label:agent-complete"
 
 # Ceiling on how long we'll wait for `gh` on a single call. Beyond this
 # the network or gh itself is clearly stuck; the caller logs + skips.
@@ -71,11 +71,11 @@ def _run_gh(cmd: list[str], *, context: str) -> subprocess.CompletedProcess[str]
         raise GhCliError(f"{context} timed out after {_GH_TIMEOUT_SECONDS}s") from e
 
 
-def list_pollable_issues(repo_slug: str) -> list[Issue]:
-    """Return open issues matching the poller filter for `repo_slug`.
+def _list_issues(repo_slug: str, search: str, *, context: str) -> list[Issue]:
+    """Shared implementation of the two issue-list calls.
 
-    Raises `GhCliError` on any failure: non-zero exit, timeout, bad
-    JSON, or `gh` not on PATH.
+    The poller filters are different (adopt vs. complete) but the
+    shape of the gh invocation and the parsing is identical.
     """
     cmd = [
         "gh",
@@ -84,25 +84,21 @@ def list_pollable_issues(repo_slug: str) -> list[Issue]:
         "--repo",
         repo_slug,
         "--search",
-        POLL_SEARCH,
+        search,
         "--json",
         "number,title,url,body",
     ]
-    result = _run_gh(cmd, context=f"gh issue list for {repo_slug}")
-
+    result = _run_gh(cmd, context=context)
     if result.returncode != 0:
         stderr = result.stderr.strip() or "(no stderr)"
-        raise GhCliError(f"gh issue list for {repo_slug} failed (rc={result.returncode}): {stderr}")
+        raise GhCliError(f"{context} failed (rc={result.returncode}): {stderr}")
 
     try:
         data = json.loads(result.stdout or "[]")
     except json.JSONDecodeError as e:
-        raise GhCliError(f"gh issue list for {repo_slug} returned invalid JSON: {e}") from e
-
+        raise GhCliError(f"{context} returned invalid JSON: {e}") from e
     if not isinstance(data, list):
-        raise GhCliError(
-            f"gh issue list for {repo_slug} returned {type(data).__name__}, expected list"
-        )
+        raise GhCliError(f"{context} returned {type(data).__name__}, expected list")
 
     return [
         Issue(
@@ -114,6 +110,64 @@ def list_pollable_issues(repo_slug: str) -> list[Issue]:
         )
         for d in data
     ]
+
+
+def list_pollable_issues(repo_slug: str) -> list[Issue]:
+    """Return open issues in the adopt-pass filter for `repo_slug`.
+
+    Raises `GhCliError` on any failure.
+    """
+    return _list_issues(
+        repo_slug,
+        POLL_SEARCH,
+        context=f"gh issue list (adopt pass) for {repo_slug}",
+    )
+
+
+def list_issues_awaiting_completion(repo_slug: str) -> list[Issue]:
+    """Return issues already enqueued but not yet marked `agent-complete`.
+
+    This is the completion-pass filter — enqueued issues the poller
+    needs to check for a final status + post a terminal comment on.
+    """
+    return _list_issues(
+        repo_slug,
+        COMPLETION_SEARCH,
+        context=f"gh issue list (completion pass) for {repo_slug}",
+    )
+
+
+def get_issue_comments(repo_slug: str, issue_number: int) -> list[str]:
+    """Return every comment body on the issue in posted order.
+
+    Used by the poller to find the `<!-- rae-local-agent:job_id=X -->`
+    tag it dropped on adoption. Raises `GhCliError` on failure.
+    """
+    cmd = [
+        "gh",
+        "issue",
+        "view",
+        str(issue_number),
+        "--repo",
+        repo_slug,
+        "--json",
+        "comments",
+    ]
+    context = f"gh issue view comments on {repo_slug}#{issue_number}"
+    result = _run_gh(cmd, context=context)
+    if result.returncode != 0:
+        stderr = result.stderr.strip() or "(no stderr)"
+        raise GhCliError(f"{context} failed (rc={result.returncode}): {stderr}")
+
+    try:
+        data = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as e:
+        raise GhCliError(f"{context} returned invalid JSON: {e}") from e
+
+    comments = data.get("comments") if isinstance(data, dict) else None
+    if not isinstance(comments, list):
+        raise GhCliError(f"{context} returned no `comments` list (got {type(comments).__name__})")
+    return [c.get("body") or "" for c in comments]
 
 
 def comment_on_issue(repo_slug: str, issue_number: int, body: str) -> None:
