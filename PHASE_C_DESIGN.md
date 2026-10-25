@@ -141,8 +141,15 @@ On completion, the poller posts a terminal comment on the issue:
   diff; suggests the spec may be too open-ended.
 - **Status starting with `error:`**: the error string verbatim.
 
-The comment carries an HTML comment tag so later ticks don't
-double-post: `<!-- rae-local-agent:completion -->`.
+The comment carries a per-job HTML tag so later ticks don't
+double-post: `<!-- rae-local-agent:completion:job_id=<id> -->`. The
+tag is scoped to the job id so a retry cycle (user removes `agent-*`
+labels → new adopt → new job id) still gets a fresh completion
+comment; the previous cycle's stale completion comment does not
+suppress it. (Pre-D-1 completion comments carried the un-scoped tag
+`<!-- rae-local-agent:completion -->`; they are ignored by the
+per-job idempotency check — a legacy issue retried after upgrading
+will post a fresh, correctly-tagged completion comment.)
 
 ## Deployment
 

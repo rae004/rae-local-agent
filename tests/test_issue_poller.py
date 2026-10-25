@@ -759,7 +759,7 @@ def test_handle_completion_retries_only_label_when_completion_tag_already_posted
         "get_issue_comments",
         lambda s, n: [
             _ADOPT_COMMENT,
-            "Done — draft PR: https://x/pr/1\n\n<!-- rae-local-agent:completion -->",
+            "Done — draft PR: https://x/pr/1\n\n<!-- rae-local-agent:completion:job_id=job-1 -->",
         ],
     )
     calls: list[tuple] = []
@@ -774,6 +774,67 @@ def test_handle_completion_retries_only_label_when_completion_tag_already_posted
 
     kinds = [c[0] for c in calls]
     assert kinds == ["label"]  # No duplicate completion comment.
+
+
+def test_handle_completion_posts_fresh_comment_when_only_old_cycle_tag_present(
+    tmp_path, monkeypatch
+):
+    """A completion tag from a *different* job id (prior retry cycle) must not suppress
+    this cycle's completion comment. The per-job scoping is the whole point of D-1."""
+    _done_ok_fixture(tmp_path, monkeypatch)
+    issue = gh_api.Issue(number=5, title="t", url="u", body="b")
+    monkeypatch.setattr(
+        gh_api,
+        "get_issue_comments",
+        lambda s, n: [
+            # Previous cycle's completion comment, pointing at a DIFFERENT job id.
+            "Tests failed — ...\n\n<!-- rae-local-agent:completion:job_id=older-cycle -->",
+            # This cycle's adopt comment names job-1 (the one on disk).
+            _ADOPT_COMMENT,
+        ],
+    )
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        gh_api,
+        "comment_on_issue",
+        lambda s, n, b: calls.append(("comment", b)),
+    )
+    monkeypatch.setattr(gh_api, "add_label", lambda s, n, label: calls.append(("label", label)))
+
+    issue_poller._handle_completion("owner/repo", issue)
+
+    kinds = [c[0] for c in calls]
+    assert kinds == ["comment", "label"]
+    _, posted = calls[0]
+    assert "<!-- rae-local-agent:completion:job_id=job-1 -->" in posted
+
+
+def test_handle_completion_ignores_legacy_untagged_completion_comment(tmp_path, monkeypatch):
+    """A pre-D-1 completion comment carries the plain `completion` tag with no job id.
+    It must NOT be mistaken for this job's own idempotency marker."""
+    _done_ok_fixture(tmp_path, monkeypatch)
+    issue = gh_api.Issue(number=5, title="t", url="u", body="b")
+    monkeypatch.setattr(
+        gh_api,
+        "get_issue_comments",
+        lambda s, n: [
+            # Legacy format from before D-1 — no job_id in the tag.
+            "Done — draft PR: https://x/pr/0\n\n<!-- rae-local-agent:completion -->",
+            _ADOPT_COMMENT,
+        ],
+    )
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        gh_api,
+        "comment_on_issue",
+        lambda s, n, b: calls.append(("comment", b)),
+    )
+    monkeypatch.setattr(gh_api, "add_label", lambda s, n, label: calls.append(("label", label)))
+
+    issue_poller._handle_completion("owner/repo", issue)
+
+    kinds = [c[0] for c in calls]
+    assert kinds == ["comment", "label"]
 
 
 def test_handle_completion_label_failure_logs_but_does_not_crash(tmp_path, monkeypatch, caplog):

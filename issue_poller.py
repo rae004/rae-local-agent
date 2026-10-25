@@ -57,13 +57,18 @@ LABEL_QUEUED = "agent-queued"
 LABEL_INVALID = "agent-invalid"
 LABEL_COMPLETE = "agent-complete"
 
-# HTML comment tags we stamp into our own posted comments. The adopt tag
-# carries the job id for the completion pass to find; the completion
-# tag is the "already closed out this issue" marker that keeps us from
-# double-posting if the agent-complete label write fails after a comment
-# write.
+# HTML comment tags we stamp into our own posted comments. Both the
+# adopt tag and the completion tag carry the job id: the adopt tag so
+# the completion pass can look up the right job, the completion tag so
+# idempotency is scoped per-job rather than per-issue. A fresh adopt
+# cycle (user removes the agent-* labels to retry) gets a new job id
+# and so a new, distinct completion comment — the stale completion
+# comment from the prior cycle no longer suppresses it.
 _JOB_ID_TAG_RE = re.compile(r"<!-- rae-local-agent:job_id=([A-Za-z0-9-]+) -->")
-_COMPLETION_TAG = "<!-- rae-local-agent:completion -->"
+
+
+def _completion_tag(job_id: str) -> str:
+    return f"<!-- rae-local-agent:completion:job_id={job_id} -->"
 
 
 class _StopFlag:
@@ -241,9 +246,11 @@ def _completion_comment(job_id: str, status: dict) -> str:
     Four shapes: `ok` (PR URL + 5-line diff preview + collapsible full
     diff), `tests_failed` (first 20 log lines in a code fence),
     `model_declined` (short note), `error:...` (verbatim). Every
-    output ends with the completion tag so later ticks skip it.
+    output ends with the per-job completion tag so later ticks skip it
+    for *this* job (a later cycle with a new job id still posts).
     """
     txt = status["status"]
+    tag = _completion_tag(job_id)
 
     if txt == "ok":
         pr_url = status["pr_url"] or "(no pr_url recorded)"
@@ -260,7 +267,7 @@ def _completion_comment(job_id: str, status: dict) -> str:
             )
         else:
             body = f"Done — draft PR: {pr_url}"
-        return f"{body}\n\n{_COMPLETION_TAG}"
+        return f"{body}\n\n{tag}"
 
     if txt == "tests_failed":
         log_text = status["log"]
@@ -280,7 +287,7 @@ def _completion_comment(job_id: str, status: dict) -> str:
             f"First 20 lines of the log:\n\n"
             f"```\n{head}\n```"
             f"{tail_note}\n\n"
-            f"{_COMPLETION_TAG}"
+            f"{tag}"
         )
 
     if txt == "model_declined":
@@ -288,15 +295,15 @@ def _completion_comment(job_id: str, status: dict) -> str:
             "The model returned no diff. This usually means the spec was "
             "too open-ended for a mechanical rewrite; try tightening it "
             "to a specific before/after.\n\n"
-            f"{_COMPLETION_TAG}"
+            f"{tag}"
         )
 
     if txt.startswith("error:"):
-        return f"Job errored: `{txt}`\n\n{_COMPLETION_TAG}"
+        return f"Job errored: `{txt}`\n\n{tag}"
 
     # Catch-all — unexpected status strings aren't an invariant we
     # should crash on; just report them verbatim.
-    return f"Job completed with unknown status: `{txt}`\n\n{_COMPLETION_TAG}"
+    return f"Job completed with unknown status: `{txt}`\n\n{tag}"
 
 
 def _handle_completion(repo_slug: str, issue: gh_api.Issue) -> None:
@@ -304,9 +311,11 @@ def _handle_completion(repo_slug: str, issue: gh_api.Issue) -> None:
 
     Skips (no writes) if: the job id tag isn't in any comment, the job
     doesn't exist on disk, or the job is still pending/running. The
-    HTML completion tag on an existing comment is checked before
-    posting so a prior comment + failed-label-write doesn't double-post
-    on the next tick.
+    per-job HTML completion tag on an existing comment is checked
+    before posting so a prior comment + failed-label-write doesn't
+    double-post on the next tick. The check is scoped to *this*
+    job_id: a retry cycle (new adopt → new job id) still posts even
+    though an older cycle's completion comment is still on the issue.
     """
     try:
         comments = gh_api.get_issue_comments(repo_slug, issue.number)
@@ -343,10 +352,14 @@ def _handle_completion(repo_slug: str, issue: gh_api.Issue) -> None:
         )
         return
 
-    # Already posted a completion comment on a prior tick? Just add
-    # the label (the only reason we'd be here is that the label write
-    # failed last time).
-    if any(_COMPLETION_TAG in (c or "") for c in comments):
+    # Already posted a completion comment for *this* job on a prior
+    # tick? Just add the label (the only reason we'd be here is that
+    # the label write failed after the comment went out). A stale
+    # completion comment from a previous cycle with a different job id
+    # does not match this check and so does not suppress the new
+    # cycle's comment.
+    per_job_tag = _completion_tag(job_id)
+    if any(per_job_tag in (c or "") for c in comments):
         try:
             gh_api.add_label(repo_slug, issue.number, LABEL_COMPLETE)
         except gh_api.GhCliError as e:
