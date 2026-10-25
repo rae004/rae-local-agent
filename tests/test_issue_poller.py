@@ -561,7 +561,7 @@ def test_completion_comment_tests_failed_includes_log_head():
 def test_completion_comment_tests_failed_handles_missing_log():
     status = {"state": "failed", "status": "tests_failed", "pr_url": "", "diff": "", "log": ""}
     out = issue_poller._completion_comment("job-1", status)
-    assert "no log captured" in out
+    assert "emitted no output" in out
 
 
 def test_completion_comment_model_declined():

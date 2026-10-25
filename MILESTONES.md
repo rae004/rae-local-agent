@@ -269,7 +269,7 @@ on the issue, (c) a comment naming the job id. Breaking the body
 intentionally (e.g. empty scope) results in `agent-invalid` + a
 pointed comment, no enqueue.
 
-### C4 — Completion comment-back
+### C4 — Completion comment-back ✅
 
 Close the loop. Issues get a final comment with the result.
 
@@ -289,7 +289,12 @@ single comment with the PR URL and the diff preview, and the
 `failed/tests_failed`. Removing `agent-complete` + `agent-queued`
 causes re-enqueue on the next tick (manual retry path).
 
-### C5 — Systemd packaging
+**Status:** done in [#44](https://github.com/rae004/rae-local-agent/pull/44).
+Four completion shapes validated end-to-end in the C runbook —
+rae-local-agent#46 (ok), #48 (tests_failed), #49 (error:dirty_tree),
+#50 (agent-invalid).
+
+### C5 — Systemd packaging ✅
 
 The poller becomes something you can `enable --now`.
 
@@ -305,7 +310,14 @@ shows a healthy service running against a real `repos.yaml`;
 restarts survive reboot; the service doesn't interfere with the
 worker and vice-versa.
 
-### C6 — End-to-end validation on a real repo
+**Status:** done. Unit file shipped in C0
+([#32](https://github.com/rae004/rae-local-agent/pull/32)), promoted
+to a real long-running service in C1
+([#34](https://github.com/rae004/rae-local-agent/pull/34)); first
+`enable --now` ran during the C4 runbook with the full poller + worker
+pair active, each independently restarted without affecting the other.
+
+### C6 — End-to-end validation on a real repo ✅
 
 One real issue through the full pipeline, on a real repo.
 
@@ -315,6 +327,14 @@ a comment on the issue pointing at it, zero human intervention
 between opening the issue and the PR link landing on the issue.
 Documented in README under "First real issue-driven run" alongside
 the Phase B first-real-run section.
+
+**Status:** done. Validated against rae-local-agent itself:
+[#46](https://github.com/rae004/rae-local-agent/issues/46) opened
+with a labeled issue, zero intervention, worker produced
+[PR #47](https://github.com/rae004/rae-local-agent/pull/47),
+poller posted the completion comment with the PR URL. Documented
+in README § "First issue-driven run" alongside the Phase B
+"First real run" section.
 
 ---
 

@@ -24,10 +24,12 @@ a 32B coder can do locally.
   [grouping jobs into one PR](#grouping-jobs-into-one-pr) via a shared
   `group_id`. Done. See [First real run](#first-real-run).
   See `MILESTONES.md` for the slice plan.
-- **Phase C** (designed, not implemented): standing task feed from
-  GitHub issues. See
-  [`PHASE_C_DESIGN.md`](./PHASE_C_DESIGN.md) and the Phase C section
-  of `MILESTONES.md`.
+- **Phase C**: standing task feed from GitHub issues — labeled issues
+  on a configured repo are parsed, enqueued, and closed out with a
+  terminal comment. Done. See
+  [First issue-driven run](#first-issue-driven-run) for the end-to-end
+  validation, [`PHASE_C_DESIGN.md`](./PHASE_C_DESIGN.md) for the
+  design.
 
 ## First real run
 
@@ -80,6 +82,61 @@ and fixed in
 subprocess now runs with `VIRTUAL_ENV`/`UV_PROJECT_ENVIRONMENT`
 scrubbed and the target repo's `.venv` symlinked into the worktree,
 so the gate actually resolves against the target.
+
+## First issue-driven run
+
+Phase C closeout — the standing-feed service enabled against
+`rae004/rae-local-agent` itself, four scenarios exercising every
+completion comment-shape end-to-end:
+
+- **`ok`** —
+  [rae-local-agent#46](https://github.com/rae004/rae-local-agent/issues/46)
+  opened with a labeled issue, poller enqueued, worker produced
+  [PR #47](https://github.com/rae004/rae-local-agent/pull/47) with
+  green CI (the issue body chained `uv run ruff format` into
+  `test_cmd` to pre-empt formatter red). Poller posted
+  `Done — draft PR: …` with a diff preview and labeled
+  `agent-complete`.
+- **`tests_failed`** —
+  [#48](https://github.com/rae004/rae-local-agent/issues/48) with
+  `test_cmd: ["sh", "-c", "false"]`. No branch pushed, job landed in
+  `jobs/failed/`, poller posted `Tests failed —` with the (empty) log
+  head, labeled `agent-complete`.
+- **`error:dirty_tree`** —
+  [#49](https://github.com/rae004/rae-local-agent/issues/49) with
+  `.runbook-dirty` sitting in the target worktree before enqueue.
+  Worker aborted with `error:dirty_tree`, poller posted
+  `` Job errored: `error:dirty_tree` ``, labeled `agent-complete`.
+- **`agent-invalid`** —
+  [#50](https://github.com/rae004/rae-local-agent/issues/50) with a
+  body that had no frontmatter. Parser rejected, poller posted
+  `Could not enqueue this issue: …`, labeled `agent-invalid`. No job
+  on disk, no `agent-queued`, no `agent-complete`.
+
+All four landed with zero intervention between opening the issue and
+the terminal label landing. The adopt + completion passes handled
+every shape of worker outcome correctly.
+
+### Operating the service
+
+Prereqs on each repo in `repos.yaml`:
+
+```bash
+for L in local-agent agent-queued agent-invalid agent-complete; do
+  gh label create "$L" --repo <owner>/<repo>
+done
+```
+
+Enable the service once labels + config are in place:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now rae-local-agent-issue-poller
+journalctl --user -u rae-local-agent-issue-poller -f
+```
+
+To retry a rejected issue: fix the body, remove `agent-invalid`,
+leave `local-agent`. The next tick re-adopts.
 
 ## Requirements
 
