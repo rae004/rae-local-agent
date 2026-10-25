@@ -1,4 +1,4 @@
-"""Tests for the thin `gh` CLI wrapper (C1 + C3).
+"""Tests for the thin `gh` CLI wrapper (C1 + C3 + C4).
 
 The whole point of `gh_api` is to isolate subprocess calls behind a
 small typed surface. Tests here monkeypatch `subprocess.run` so the
@@ -288,3 +288,133 @@ def test_add_label_timeout_raises(monkeypatch):
     monkeypatch.setattr(subprocess, "run", _slow)
     with pytest.raises(gh_api.GhCliError, match="timed out"):
         gh_api.add_label("x/y", 5, "agent-queued")
+
+
+# ---------- list_issues_awaiting_completion ----------------------------
+
+
+def test_list_issues_awaiting_completion_parses_rows(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _ok_json(
+            [{"number": 11, "title": "t", "url": "u", "body": "b"}],
+        ),
+    )
+    assert gh_api.list_issues_awaiting_completion("x/y") == [
+        gh_api.Issue(number=11, title="t", url="u", body="b"),
+    ]
+
+
+def test_list_issues_awaiting_completion_uses_completion_search(monkeypatch):
+    """The two listing calls differ only in the search string — pin it."""
+    seen = {}
+
+    def _capture(cmd, *a, **k):
+        seen["cmd"] = cmd
+        return _ok_json([])
+
+    monkeypatch.setattr(subprocess, "run", _capture)
+    gh_api.list_issues_awaiting_completion("owner/repo")
+
+    assert "--search" in seen["cmd"]
+    search_idx = seen["cmd"].index("--search") + 1
+    assert seen["cmd"][search_idx] == gh_api.COMPLETION_SEARCH
+
+
+def test_list_issues_awaiting_completion_non_zero_rc_raises(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(returncode=1, stderr="scope"),
+    )
+    with pytest.raises(gh_api.GhCliError, match="completion pass.*scope"):
+        gh_api.list_issues_awaiting_completion("x/y")
+
+
+# ---------- get_issue_comments -----------------------------------------
+
+
+def test_get_issue_comments_returns_bodies(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(
+            returncode=0,
+            stdout=json.dumps(
+                {"comments": [{"body": "first"}, {"body": "second"}]},
+            ),
+        ),
+    )
+    assert gh_api.get_issue_comments("x/y", 42) == ["first", "second"]
+
+
+def test_get_issue_comments_empty_list(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(returncode=0, stdout='{"comments": []}'),
+    )
+    assert gh_api.get_issue_comments("x/y", 42) == []
+
+
+def test_get_issue_comments_missing_body_defaults_to_empty_string(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(returncode=0, stdout='{"comments": [{}]}'),
+    )
+    assert gh_api.get_issue_comments("x/y", 42) == [""]
+
+
+def test_get_issue_comments_builds_expected_command(monkeypatch):
+    seen = {}
+
+    def _capture(cmd, *a, **k):
+        seen["cmd"] = cmd
+        return _FakeCompleted(returncode=0, stdout='{"comments": []}')
+
+    monkeypatch.setattr(subprocess, "run", _capture)
+    gh_api.get_issue_comments("owner/repo", 7)
+
+    assert seen["cmd"] == [
+        "gh",
+        "issue",
+        "view",
+        "7",
+        "--repo",
+        "owner/repo",
+        "--json",
+        "comments",
+    ]
+
+
+def test_get_issue_comments_non_zero_rc_raises(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(returncode=1, stderr="not found"),
+    )
+    with pytest.raises(gh_api.GhCliError, match="view comments on x/y#9.*not found"):
+        gh_api.get_issue_comments("x/y", 9)
+
+
+def test_get_issue_comments_bad_json_raises(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(returncode=0, stdout="not json"),
+    )
+    with pytest.raises(gh_api.GhCliError, match="invalid JSON"):
+        gh_api.get_issue_comments("x/y", 9)
+
+
+def test_get_issue_comments_shape_mismatch_raises(monkeypatch):
+    """Shape surprise is worth erroring on — the poller depends on this field."""
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(returncode=0, stdout='{"other": []}'),
+    )
+    with pytest.raises(gh_api.GhCliError, match="no `comments` list"):
+        gh_api.get_issue_comments("x/y", 9)

@@ -3,34 +3,37 @@
 See `PHASE_C_DESIGN.md` for the full design (loop shape, issue body
 format, label state model, deployment).
 
-**C3 scope** — enqueue side of the loop goes live. On each tick, for
-every pollable issue:
+**Current scope (C1-C4)** — each tick runs two passes:
 
-1. Parse the body with `issue_body.parse_issue_body`.
-2. On parse error: comment the error, add `agent-invalid`. No job
-   written; the issue drops out of future ticks until the human
-   fixes the body and removes the label.
-3. On parse success: adopt the issue by writing `agent-queued`
-   FIRST (idempotency gate — subsequent ticks won't see it), then
-   write the job to `jobs/pending/`, then post a comment carrying
-   the job id in an HTML tag for C4's lookup.
+1. **Adopt pass** — list issues matching
+   `label:local-agent -label:agent-queued -label:agent-invalid`.
+   For each: parse the YAML frontmatter + markdown prose, build a
+   job record, add `agent-queued` (idempotency gate), write the job
+   to `jobs/pending/`, post a comment carrying the job id in an HTML
+   tag. On parse / enqueue failure: comment the error + add
+   `agent-invalid`.
 
-Order matters. If the label write fails, nothing is enqueued — next
-tick retries cleanly. If the label succeeds but the write-pending
-fails (filesystem issue), the issue sits in `agent-queued` with no
-job and no comment; the operator sees that in the logs and manually
-removes labels to retry. If the comment fails, the job runs anyway
-and the operator can grep the log for the id — the completion
-comment-back (C4) will still find the issue via the agent-queued
-label query.
+2. **Completion pass** — list issues matching
+   `label:agent-queued -label:agent-complete`. For each: pull the
+   job id from the earlier adopt-pass comment, look up the on-disk
+   status, and if the job is terminal (`done` or `failed`), post a
+   terminal comment (shape per status, see `_completion_comment`)
+   and add `agent-complete`.
 
-C4 adds the completion comment-back; C5 adds error recovery for
-stuck jobs.
+Order on the adopt-pass accept-path puts every local-only failure
+before any external write — see `_accept`. On the completion pass,
+the comment is posted before the label so an HTML tag in the comment
+is the idempotency marker even if the label write fails and we revisit
+the issue on the next tick.
+
+C5 adds error recovery for stuck jobs; C6 is the end-to-end validation
+pass.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import signal
 import sys
 import time
@@ -52,6 +55,15 @@ _SLEEP_CHUNK_SECONDS = 1.0
 # poller's state-machine vocabulary, not generic GitHub plumbing.
 LABEL_QUEUED = "agent-queued"
 LABEL_INVALID = "agent-invalid"
+LABEL_COMPLETE = "agent-complete"
+
+# HTML comment tags we stamp into our own posted comments. The adopt tag
+# carries the job id for the completion pass to find; the completion
+# tag is the "already closed out this issue" marker that keeps us from
+# double-posting if the agent-complete label write fails after a comment
+# write.
+_JOB_ID_TAG_RE = re.compile(r"<!-- rae-local-agent:job_id=([A-Za-z0-9-]+) -->")
+_COMPLETION_TAG = "<!-- rae-local-agent:completion -->"
 
 
 class _StopFlag:
@@ -75,21 +87,20 @@ def _interruptible_sleep(seconds: int) -> None:
         time.sleep(_SLEEP_CHUNK_SECONDS)
 
 
+# ---------- adopt pass -------------------------------------------------
+
+
 def _accept_comment(job_id: str) -> str:
     """The comment body posted after a successful enqueue.
 
-    The HTML tag is machine-readable; C4's completion comment-back
-    extracts the job id from it when looking up the status.
+    The HTML tag is machine-readable; the completion pass extracts the
+    job id from it when looking up the status.
     """
     return f"Enqueued as `{job_id}`.\n\n<!-- rae-local-agent:job_id={job_id} -->"
 
 
 def _reject_comment(reason: str) -> str:
-    """The comment body posted when parse or enqueue fails.
-
-    The human reads this directly, so it names the problem and tells
-    them how to retry.
-    """
+    """Comment body posted when parse or enqueue fails."""
     return (
         f"Could not enqueue this issue: {reason}\n\n"
         f"Fix the issue body, then remove the `{LABEL_INVALID}` label "
@@ -98,14 +109,7 @@ def _reject_comment(reason: str) -> str:
 
 
 def _reject(repo_slug: str, issue: gh_api.Issue, reason: str) -> None:
-    """Reject-path: comment + `agent-invalid` label.
-
-    Writes are best-effort — a failure to label after commenting
-    (unlikely in practice) leaves the issue unlabeled; next tick will
-    see it again and re-run the parse (which will fail the same way)
-    and re-post a comment. The duplicate comment is tolerable; the
-    alternative (not surfacing the error) is worse.
-    """
+    """Reject-path: comment + `agent-invalid` label. Both best-effort."""
     log.info("rejecting %s#%d: %s", repo_slug, issue.number, reason)
     try:
         gh_api.comment_on_issue(repo_slug, issue.number, _reject_comment(reason))
@@ -118,21 +122,15 @@ def _reject(repo_slug: str, issue: gh_api.Issue, reason: str) -> None:
 
 
 def _accept(repo_slug: str, issue: gh_api.Issue, parsed: dict, repo_root: str) -> None:
-    """Accept-path: build record (can fail), label (idempotency gate),
-    write pending, comment.
+    """Build record (can fail) → label (idempotency gate) → write pending → comment.
 
-    Order chosen to put every local-only failure before any external
-    write. `_make_job_record` validates `repo_root` and `group_id` —
-    if that raises, we haven't touched GitHub yet and the caller can
-    re-route to `_reject` cleanly. Only once the record is in hand
-    do we add the `agent-queued` label (which is what keeps the next
-    tick from re-adopting the same issue). If the label write fails,
-    nothing's enqueued and the next tick retries. The window between
-    label write and write-pending is sub-ms, so a crash there is
-    effectively a non-concern.
+    Local-only failures (bad `repo_root`, bad `group_id`) propagate up
+    to the caller without any gh write. Label failure skips the
+    enqueue so the next tick retries cleanly. Comment failure after
+    the job is written is logged but non-fatal — the worker still
+    produces a PR.
     """
     record = server._make_job_record(**parsed, repo_root=repo_root)
-
     try:
         gh_api.add_label(repo_slug, issue.number, LABEL_QUEUED)
     except gh_api.GhCliError as e:
@@ -145,9 +143,6 @@ def _accept(repo_slug: str, issue: gh_api.Issue, parsed: dict, repo_root: str) -
     try:
         gh_api.comment_on_issue(repo_slug, issue.number, _accept_comment(job_id))
     except gh_api.GhCliError as e:
-        # Job already queued and labeled; the worker will still produce a
-        # draft PR. The operator can grep the warning for the job id to
-        # repost the comment by hand if they care about traceability.
         log.warning(
             "enqueue comment on %s#%d (job %s) failed: %s",
             repo_slug,
@@ -158,13 +153,7 @@ def _accept(repo_slug: str, issue: gh_api.Issue, parsed: dict, repo_root: str) -
 
 
 def _handle_issue(repo_slug: str, issue: gh_api.Issue, repo_root: str) -> None:
-    """Parse → enqueue, or parse-error → reject. One issue end-to-end.
-
-    All exceptions below `InvalidIssue` are reclassified as rejection
-    reasons too: a surprise failure in `_make_job_record` (e.g.
-    `repo_root` isn't a directory anymore) is surfaced to the issue
-    author rather than silently crashing the tick.
-    """
+    """Parse → enqueue, or route to reject on any failure."""
     try:
         parsed = issue_body.parse_issue_body(issue.body)
     except issue_body.InvalidIssue as e:
@@ -177,22 +166,236 @@ def _handle_issue(repo_slug: str, issue: gh_api.Issue, repo_root: str) -> None:
         _reject(repo_slug, issue, f"enqueue failed: {type(e).__name__}: {e}")
 
 
-def tick(cfg: Config) -> int:
-    """One pass: list pollable issues per repo, handle each. Returns count seen.
+def _adopt_pass(repo_slug: str, repo_root: str) -> int:
+    """List pollable issues on `repo_slug` and route each through `_handle_issue`.
 
-    A `gh list` failure on one repo is logged and skipped — one repo's
-    auth lapse must not take down the sibling repos.
+    A `gh list` failure here is logged + skipped so sibling repos
+    aren't taken down by one repo's auth lapse.
+    """
+    try:
+        issues = gh_api.list_pollable_issues(repo_slug)
+    except gh_api.GhCliError as e:
+        log.warning("skipping %s this tick (adopt): %s", repo_slug, e)
+        return 0
+    for issue in issues:
+        _handle_issue(repo_slug, issue, repo_root)
+    return len(issues)
+
+
+# ---------- completion pass --------------------------------------------
+
+
+def _extract_job_id(comments: list[str]) -> str | None:
+    """First `rae-local-agent:job_id=X` tag in any comment, or None.
+
+    Comments are scanned in posted order; the adopt pass drops exactly
+    one tag per adoption, so "first match" is "the one we care about".
+    """
+    for body in comments:
+        m = _JOB_ID_TAG_RE.search(body or "")
+        if m is not None:
+            return m.group(1)
+    return None
+
+
+def _lookup_job_status(job_id: str) -> dict | None:
+    """Pull the terminal-state artifacts from disk for `job_id`.
+
+    Returns None if the job doesn't exist. Returns a dict with just
+    `state` if the job is still pending/running. For terminal states
+    (done/failed) also returns `status`, `pr_url`, `diff`, `log` so
+    the comment-formatter has everything it needs.
+    """
+    found = job.find_record(job_id)
+    if found is None:
+        return None
+    state, _record = found
+    if state not in ("done", "failed"):
+        return {"state": state}
+    return {
+        "state": state,
+        "status": job.read_artifact(job_id, state, "status.txt").strip(),
+        "pr_url": job.read_artifact(job_id, state, "pr_url.txt").strip(),
+        "diff": job.read_artifact(job_id, state, "diff.patch"),
+        "log": job.read_artifact(job_id, state, "log.txt"),
+    }
+
+
+def _completion_comment(job_id: str, status: dict) -> str:
+    """Format the terminal comment per `PHASE_C_DESIGN.md` § "The comment-back".
+
+    Four shapes: `ok` (PR URL + 5-line diff preview + collapsible full
+    diff), `tests_failed` (first 20 log lines in a code fence),
+    `model_declined` (short note), `error:...` (verbatim). Every
+    output ends with the completion tag so later ticks skip it.
+    """
+    txt = status["status"]
+
+    if txt == "ok":
+        pr_url = status["pr_url"] or "(no pr_url recorded)"
+        diff = status["diff"]
+        if diff:
+            preview = "\n".join(diff.splitlines()[:5])
+            body = (
+                f"Done — draft PR: {pr_url}\n\n"
+                f"First lines of the diff:\n\n"
+                f"```diff\n{preview}\n```\n\n"
+                f"<details><summary>Full diff</summary>\n\n"
+                f"```diff\n{diff}\n```\n\n"
+                f"</details>"
+            )
+        else:
+            body = f"Done — draft PR: {pr_url}"
+        return f"{body}\n\n{_COMPLETION_TAG}"
+
+    if txt == "tests_failed":
+        log_text = status["log"]
+        if log_text:
+            head = "\n".join(log_text.splitlines()[:20])
+            tail_note = (
+                f"\n\nFull log in the worker's artifacts under `jobs/failed/{job_id}/log.txt`."
+            )
+        else:
+            head = "(no log captured)"
+            tail_note = ""
+        return (
+            f"Tests failed — the diff was applied in a worktree but the "
+            f"test command returned non-zero, so no branch was pushed. "
+            f"First 20 lines of the log:\n\n"
+            f"```\n{head}\n```"
+            f"{tail_note}\n\n"
+            f"{_COMPLETION_TAG}"
+        )
+
+    if txt == "model_declined":
+        return (
+            "The model returned no diff. This usually means the spec was "
+            "too open-ended for a mechanical rewrite; try tightening it "
+            "to a specific before/after.\n\n"
+            f"{_COMPLETION_TAG}"
+        )
+
+    if txt.startswith("error:"):
+        return f"Job errored: `{txt}`\n\n{_COMPLETION_TAG}"
+
+    # Catch-all — unexpected status strings aren't an invariant we
+    # should crash on; just report them verbatim.
+    return f"Job completed with unknown status: `{txt}`\n\n{_COMPLETION_TAG}"
+
+
+def _handle_completion(repo_slug: str, issue: gh_api.Issue) -> None:
+    """One issue of the completion pass: look up the job, post + label if terminal.
+
+    Skips (no writes) if: the job id tag isn't in any comment, the job
+    doesn't exist on disk, or the job is still pending/running. The
+    HTML completion tag on an existing comment is checked before
+    posting so a prior comment + failed-label-write doesn't double-post
+    on the next tick.
+    """
+    try:
+        comments = gh_api.get_issue_comments(repo_slug, issue.number)
+    except gh_api.GhCliError as e:
+        log.warning("fetching comments for %s#%d failed: %s", repo_slug, issue.number, e)
+        return
+
+    job_id = _extract_job_id(comments)
+    if job_id is None:
+        log.warning(
+            "%s#%d has `%s` but no job_id tag in its comments; skipping",
+            repo_slug,
+            issue.number,
+            LABEL_QUEUED,
+        )
+        return
+
+    status = _lookup_job_status(job_id)
+    if status is None:
+        log.warning(
+            "job %s not found on disk; skipping completion for %s#%d",
+            job_id,
+            repo_slug,
+            issue.number,
+        )
+        return
+    if status["state"] not in ("done", "failed"):
+        log.info(
+            "%s#%d still waiting on job %s (state=%s)",
+            repo_slug,
+            issue.number,
+            job_id,
+            status["state"],
+        )
+        return
+
+    # Already posted a completion comment on a prior tick? Just add
+    # the label (the only reason we'd be here is that the label write
+    # failed last time).
+    if any(_COMPLETION_TAG in (c or "") for c in comments):
+        try:
+            gh_api.add_label(repo_slug, issue.number, LABEL_COMPLETE)
+        except gh_api.GhCliError as e:
+            log.warning(
+                "complete label (retry) on %s#%d failed: %s",
+                repo_slug,
+                issue.number,
+                e,
+            )
+        return
+
+    try:
+        gh_api.comment_on_issue(
+            repo_slug,
+            issue.number,
+            _completion_comment(job_id, status),
+        )
+    except gh_api.GhCliError as e:
+        log.warning("complete comment on %s#%d failed: %s", repo_slug, issue.number, e)
+        return
+    try:
+        gh_api.add_label(repo_slug, issue.number, LABEL_COMPLETE)
+    except gh_api.GhCliError as e:
+        log.warning("complete label on %s#%d failed: %s", repo_slug, issue.number, e)
+    else:
+        log.info(
+            "completed %s#%d (job %s, status=%s)",
+            repo_slug,
+            issue.number,
+            job_id,
+            status["status"],
+        )
+
+
+def _completion_pass(repo_slug: str) -> int:
+    """List issues awaiting completion on `repo_slug` and process each.
+
+    Returns the number of issues seen (not the number closed out — a
+    completion comment is skipped if the job is still running).
+    """
+    try:
+        issues = gh_api.list_issues_awaiting_completion(repo_slug)
+    except gh_api.GhCliError as e:
+        log.warning("skipping %s this tick (completion): %s", repo_slug, e)
+        return 0
+    for issue in issues:
+        _handle_completion(repo_slug, issue)
+    return len(issues)
+
+
+# ---------- loop -------------------------------------------------------
+
+
+def tick(cfg: Config) -> int:
+    """Two passes per repo: adopt new issues, then close out queued ones.
+
+    A `gh list` failure in either pass of one repo is logged and the
+    tick moves on — one repo's auth lapse must not take down the
+    siblings. Returns the total adopt-count across repos (a soft
+    indicator for logging; not a correctness contract).
     """
     total = 0
     for slug, repo_root in cfg.repos.items():
-        try:
-            issues = gh_api.list_pollable_issues(slug)
-        except gh_api.GhCliError as e:
-            log.warning("skipping %s this tick: %s", slug, e)
-            continue
-        for issue in issues:
-            _handle_issue(slug, issue, str(repo_root))
-            total += 1
+        total += _adopt_pass(slug, str(repo_root))
+        _completion_pass(slug)
     return total
 
 
