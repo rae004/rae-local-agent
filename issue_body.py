@@ -216,3 +216,5 @@ def _validate_group_id(value: Any) -> str | None:
     if not _GROUP_ID_PATTERN.match(value):
         raise InvalidIssue(f"`group_id` must match {_GROUP_ID_PATTERN.pattern!r}, got {value!r}")
     return value
+
+# C3 canary — safe to revert
