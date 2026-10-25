@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/rae004/rae-local-agent/compare/v0.14.0...v0.15.0) (2026-10-25)
+
+
+### Features
+
+* **poller:** per-job completion-tag idempotency ([#53](https://github.com/rae004/rae-local-agent/issues/53)) ([d83b269](https://github.com/rae004/rae-local-agent/commit/d83b2696e61eec6e3388c20ce36557fc84a55a95))
+
 ## [0.14.0](https://github.com/rae004/rae-local-agent/compare/v0.13.0...v0.14.0) (2026-10-25)
 
 
