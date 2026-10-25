@@ -397,13 +397,40 @@ created on it (`gh label create` or GitHub UI):
 #### Config
 
 `~/.config/rae-local-agent/repos.yaml` — format in
-`PHASE_C_DESIGN.md` § "Configuration". Minimal example:
+`PHASE_C_DESIGN.md` § "Configuration". Minimal (back-compat) shape:
 
 ```yaml
 poll_interval_seconds: 300  # optional, default 300
 repos:
   rae004/rae-budget: /home/rae004/projects/rae-budget
 ```
+
+Mapping shape to carry per-repo gate commands (Python repo pytest +
+ruff, TS repo npm chain):
+
+```yaml
+poll_interval_seconds: 300
+repos:
+  rae004/rae-budget:
+    path: /home/rae004/projects/rae-budget
+    gate_cmds:
+      - [uv, run, ruff, format, "."]
+      - [uv, run, ruff, check, "."]
+      - [uv, run, pytest, "-q"]
+  rae004/ai-security-digest:
+    path: /home/rae004/projects/ai-security-digest
+    gate_cmds:
+      - [npm, run, lint:fix]
+      - [npm, run, build]
+      - [npm, test]
+```
+
+`gate_cmds` runs each command sequentially between `git apply` and
+`git commit` in the worker's worktree; the first non-zero exit fails
+the gate and prevents push, with per-command headers in `log.txt` so
+the terminal comment names which command died. Issue frontmatter's
+`gate_cmds` or `test_cmd` overrides the per-repo default; passing both
+in one frontmatter is a parse error.
 
 #### Dry-run / enable
 

@@ -167,7 +167,7 @@ def test_round_trip_through_make_job_record(tmp_path):
     assert record["skip_tests"] is True
     # Defaulted by `_make_job_record`:
     assert record["base_branch"] == "main"
-    assert record["test_cmd"] == server.DEFAULT_TEST_CMD
+    assert record["gate_cmds"] == server.DEFAULT_GATE_CMDS
 
 
 def test_round_trip_group_id_pattern_matches_server():
@@ -301,6 +301,72 @@ def test_test_cmd_empty_list_rejected():
 def test_test_cmd_with_non_string_item_rejected():
     body = "---\nscope: [a.py]\ntest_cmd: [pytest, 42]\n---\n\nspec"
     with pytest.raises(InvalidIssue, match=r"`test_cmd\[1\]` must be a string"):
+        parse_issue_body(body)
+
+
+# ---------- gate_cmds validation ----------------------------------------
+
+
+def test_gate_cmds_happy_path():
+    body = dedent(
+        """
+        ---
+        scope: [a.py]
+        gate_cmds:
+          - [npm, run, lint:fix]
+          - [npm, run, build]
+        ---
+
+        spec
+        """
+    ).lstrip()
+    out = parse_issue_body(body)
+    assert out["gate_cmds"] == [["npm", "run", "lint:fix"], ["npm", "run", "build"]]
+
+
+def test_gate_cmds_null_allowed():
+    body = "---\nscope: [a.py]\ngate_cmds: null\n---\n\nspec"
+    assert parse_issue_body(body)["gate_cmds"] is None
+
+
+def test_gate_cmds_wrong_type_rejected():
+    body = '---\nscope: [a.py]\ngate_cmds: "pytest"\n---\n\nspec'
+    with pytest.raises(InvalidIssue, match="`gate_cmds` must be a non-empty list of commands"):
+        parse_issue_body(body)
+
+
+def test_gate_cmds_empty_list_rejected():
+    body = "---\nscope: [a.py]\ngate_cmds: []\n---\n\nspec"
+    with pytest.raises(InvalidIssue, match="`gate_cmds` must be a non-empty list of commands"):
+        parse_issue_body(body)
+
+
+def test_gate_cmds_inner_not_a_list_rejected():
+    body = "---\nscope: [a.py]\ngate_cmds: [pytest]\n---\n\nspec"
+    with pytest.raises(InvalidIssue, match=r"`gate_cmds\[0\]` must be a non-empty list"):
+        parse_issue_body(body)
+
+
+def test_gate_cmds_inner_non_string_rejected():
+    body = "---\nscope: [a.py]\ngate_cmds: [[pytest, 42]]\n---\n\nspec"
+    with pytest.raises(InvalidIssue, match=r"`gate_cmds\[0\]\[1\]` must be a string"):
+        parse_issue_body(body)
+
+
+def test_test_cmd_and_gate_cmds_together_rejected():
+    body = dedent(
+        """
+        ---
+        scope: [a.py]
+        test_cmd: [pytest]
+        gate_cmds:
+          - [pytest]
+        ---
+
+        spec
+        """
+    ).lstrip()
+    with pytest.raises(InvalidIssue, match="either `test_cmd` or `gate_cmds`"):
         parse_issue_body(body)
 
 

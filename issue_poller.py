@@ -42,7 +42,7 @@ import gh_api
 import issue_body
 import job
 import server
-from config import DEFAULT_CONFIG_PATH, Config, InvalidConfig, load_config
+from config import DEFAULT_CONFIG_PATH, Config, InvalidConfig, RepoConfig, load_config
 
 log = logging.getLogger("rae-local-agent.issue_poller")
 
@@ -121,7 +121,12 @@ def _reject(repo_slug: str, issue: gh_api.Issue, reason: str) -> None:
         log.warning("reject label on %s#%d failed: %s", repo_slug, issue.number, e)
 
 
-def _accept(repo_slug: str, issue: gh_api.Issue, parsed: dict, repo_root: str) -> None:
+def _accept(
+    repo_slug: str,
+    issue: gh_api.Issue,
+    parsed: dict,
+    repo_cfg: RepoConfig,
+) -> None:
     """Build record (can fail) → label (idempotency gate) → write pending → comment.
 
     Local-only failures (bad `repo_root`, bad `group_id`) propagate up
@@ -129,8 +134,17 @@ def _accept(repo_slug: str, issue: gh_api.Issue, parsed: dict, repo_root: str) -
     enqueue so the next tick retries cleanly. Comment failure after
     the job is written is logged but non-fatal — the worker still
     produces a PR.
+
+    `repo_cfg.gate_cmds` is used as the gate when the issue frontmatter
+    didn't specify its own. Issue-frontmatter `gate_cmds` or `test_cmd`
+    always wins — the parser raises on both, so passing `parsed` through
+    unchanged is safe.
     """
-    record = server._make_job_record(**parsed, repo_root=repo_root)
+    kwargs = dict(parsed)
+    kwargs["repo_root"] = str(repo_cfg.path)
+    if repo_cfg.gate_cmds is not None and "gate_cmds" not in kwargs and "test_cmd" not in kwargs:
+        kwargs["gate_cmds"] = [list(cmd) for cmd in repo_cfg.gate_cmds]
+    record = server._make_job_record(**kwargs)
     try:
         gh_api.add_label(repo_slug, issue.number, LABEL_QUEUED)
     except gh_api.GhCliError as e:
@@ -152,7 +166,7 @@ def _accept(repo_slug: str, issue: gh_api.Issue, parsed: dict, repo_root: str) -
         )
 
 
-def _handle_issue(repo_slug: str, issue: gh_api.Issue, repo_root: str) -> None:
+def _handle_issue(repo_slug: str, issue: gh_api.Issue, repo_cfg: RepoConfig) -> None:
     """Parse → enqueue, or route to reject on any failure."""
     try:
         parsed = issue_body.parse_issue_body(issue.body)
@@ -161,12 +175,12 @@ def _handle_issue(repo_slug: str, issue: gh_api.Issue, repo_root: str) -> None:
         return
 
     try:
-        _accept(repo_slug, issue, parsed, repo_root)
+        _accept(repo_slug, issue, parsed, repo_cfg)
     except Exception as e:
         _reject(repo_slug, issue, f"enqueue failed: {type(e).__name__}: {e}")
 
 
-def _adopt_pass(repo_slug: str, repo_root: str) -> int:
+def _adopt_pass(repo_slug: str, repo_cfg: RepoConfig) -> int:
     """List pollable issues on `repo_slug` and route each through `_handle_issue`.
 
     A `gh list` failure here is logged + skipped so sibling repos
@@ -178,7 +192,7 @@ def _adopt_pass(repo_slug: str, repo_root: str) -> int:
         log.warning("skipping %s this tick (adopt): %s", repo_slug, e)
         return 0
     for issue in issues:
-        _handle_issue(repo_slug, issue, repo_root)
+        _handle_issue(repo_slug, issue, repo_cfg)
     return len(issues)
 
 
@@ -395,8 +409,8 @@ def tick(cfg: Config) -> int:
     indicator for logging; not a correctness contract).
     """
     total = 0
-    for slug, repo_root in cfg.repos.items():
-        total += _adopt_pass(slug, str(repo_root))
+    for slug, repo_cfg in cfg.repos.items():
+        total += _adopt_pass(slug, repo_cfg)
         _completion_pass(slug)
     return total
 

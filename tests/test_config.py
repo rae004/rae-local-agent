@@ -42,8 +42,10 @@ def test_load_config_happy_path(tmp_path):
 
     assert cfg.poll_interval_seconds == 120
     assert set(cfg.repos) == {"owner/repo-a", "owner/repo-b"}
-    assert cfg.repos["owner/repo-a"] == repo_a
-    assert cfg.repos["owner/repo-b"] == repo_b
+    assert cfg.repos["owner/repo-a"].path == repo_a
+    assert cfg.repos["owner/repo-a"].gate_cmds is None
+    assert cfg.repos["owner/repo-b"].path == repo_b
+    assert cfg.repos["owner/repo-b"].gate_cmds is None
 
 
 def test_load_config_defaults_poll_interval(tmp_path):
@@ -210,7 +212,8 @@ def test_load_config_repos_malformed_slug(tmp_path, slug):
         config.load_config(cfg_path)
 
 
-def test_load_config_repos_path_not_string(tmp_path):
+def test_load_config_repos_value_wrong_type(tmp_path):
+    """Value must be a string path OR a mapping; a bare list is neither."""
     cfg_path = _write(
         tmp_path / "repos.yaml",
         """
@@ -224,8 +227,105 @@ def test_load_config_repos_path_not_string(tmp_path):
     )
     with pytest.raises(
         config.InvalidConfig,
-        match="`repos.owner/r` must be an absolute path string",
+        match="must be either an absolute path string or a mapping",
     ):
+        config.load_config(cfg_path)
+
+
+def test_load_config_repos_mapping_shape_with_gate_cmds(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    cfg_path = _write(
+        tmp_path / "repos.yaml",
+        f"""
+        repos:
+          owner/r:
+            path: {repo}
+            gate_cmds:
+              - [npm, run, lint:fix]
+              - [npm, run, build]
+              - [npm, test]
+        """,
+    )
+
+    cfg = config.load_config(cfg_path)
+
+    rc = cfg.repos["owner/r"]
+    assert rc.path == repo
+    assert rc.gate_cmds == (
+        ("npm", "run", "lint:fix"),
+        ("npm", "run", "build"),
+        ("npm", "test"),
+    )
+
+
+def test_load_config_repos_mapping_without_gate_cmds_normalizes_to_none(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    cfg_path = _write(
+        tmp_path / "repos.yaml",
+        f"""
+        repos:
+          owner/r:
+            path: {repo}
+        """,
+    )
+    assert config.load_config(cfg_path).repos["owner/r"].gate_cmds is None
+
+
+def test_load_config_repos_mapping_rejects_unknown_key(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    cfg_path = _write(
+        tmp_path / "repos.yaml",
+        f"""
+        repos:
+          owner/r:
+            path: {repo}
+            priority: high
+        """,
+    )
+    with pytest.raises(config.InvalidConfig, match="unknown key"):
+        config.load_config(cfg_path)
+
+
+def test_load_config_repos_mapping_requires_path(tmp_path):
+    cfg_path = _write(
+        tmp_path / "repos.yaml",
+        """
+        repos:
+          owner/r:
+            gate_cmds:
+              - [pytest]
+        """,
+    )
+    with pytest.raises(config.InvalidConfig, match=r"`repos.owner/r.path` is required"):
+        config.load_config(cfg_path)
+
+
+@pytest.mark.parametrize(
+    "bad_cmds, msg_fragment",
+    [
+        ("not-a-list", "must be a non-empty list of commands"),
+        ("[]", "must be a non-empty list of commands"),
+        ("[[]]", r"gate_cmds\[0\]` must be a non-empty list"),
+        ('["not", "a", "list"]', r"gate_cmds\[0\]` must be a non-empty list"),
+        ("[[pytest, 42]]", r"gate_cmds\[0\]\[1\]` must be a string"),
+    ],
+)
+def test_load_config_repos_mapping_rejects_bad_gate_cmds(tmp_path, bad_cmds, msg_fragment):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    cfg_path = _write(
+        tmp_path / "repos.yaml",
+        f"""
+        repos:
+          owner/r:
+            path: {repo}
+            gate_cmds: {bad_cmds}
+        """,
+    )
+    with pytest.raises(config.InvalidConfig, match=msg_fragment):
         config.load_config(cfg_path)
 
 

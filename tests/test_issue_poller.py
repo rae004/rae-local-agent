@@ -145,7 +145,9 @@ def test_main_installs_signal_handlers_only_after_config_is_valid(tmp_path, monk
 def _cfg_with_repos(*slugs: str) -> config.Config:
     return config.Config(
         poll_interval_seconds=60,
-        repos={slug: Path(f"/tmp/{slug.replace('/', '_')}") for slug in slugs},
+        repos={
+            slug: config.RepoConfig(path=Path(f"/tmp/{slug.replace('/', '_')}")) for slug in slugs
+        },
     )
 
 
@@ -160,7 +162,7 @@ def test_tick_calls_handle_issue_for_each(monkeypatch, caplog, _no_completion_pa
     monkeypatch.setattr(
         issue_poller,
         "_handle_issue",
-        lambda slug, issue, repo_root: seen.append((slug, issue.number, repo_root)),
+        lambda slug, issue, repo_cfg: seen.append((slug, issue.number, str(repo_cfg.path))),
     )
 
     n = issue_poller.tick(_cfg_with_repos("owner/repo"))
@@ -256,6 +258,63 @@ def test_tick_completion_gh_error_skips_but_adopt_still_ran(monkeypatch, caplog)
 # ---------- _handle_issue: accept path ---------------------------------
 
 
+def test_handle_issue_accept_uses_repo_gate_cmds_when_issue_did_not_specify(
+    tmp_path, monkeypatch, _jobs_dir
+):
+    """Repo-level default flows into the record when the issue body is silent."""
+    body = _good_body(tmp_path)
+    issue = gh_api.Issue(number=7, title="t", url="u", body=body)
+    repo_cfg = config.RepoConfig(
+        path=tmp_path,
+        gate_cmds=(("npm", "run", "build"),),
+    )
+    monkeypatch.setattr(gh_api, "add_label", lambda *a: None)
+    monkeypatch.setattr(gh_api, "comment_on_issue", lambda *a: None)
+
+    issue_poller._handle_issue("owner/repo", issue, repo_cfg)
+
+    pending = list((_jobs_dir / "pending").iterdir())
+    assert len(pending) == 1
+    import json as _json
+
+    rec = _json.loads(pending[0].read_text())
+    assert rec["gate_cmds"] == [["npm", "run", "build"]]
+
+
+def test_handle_issue_accept_issue_gate_cmds_override_repo_default(
+    tmp_path, monkeypatch, _jobs_dir
+):
+    """Issue frontmatter `gate_cmds` wins over the repo default."""
+    body = dedent(
+        """
+        ---
+        scope:
+          - a.py
+        gate_cmds:
+          - [pytest, -x]
+        ---
+
+        Do it.
+        """
+    ).lstrip()
+    issue = gh_api.Issue(number=7, title="t", url="u", body=body)
+    repo_cfg = config.RepoConfig(
+        path=tmp_path,
+        gate_cmds=(("npm", "run", "build"),),  # should be ignored
+    )
+    monkeypatch.setattr(gh_api, "add_label", lambda *a: None)
+    monkeypatch.setattr(gh_api, "comment_on_issue", lambda *a: None)
+
+    issue_poller._handle_issue("owner/repo", issue, repo_cfg)
+
+    pending = list((_jobs_dir / "pending").iterdir())
+    assert len(pending) == 1
+    import json as _json
+
+    rec = _json.loads(pending[0].read_text())
+    assert rec["gate_cmds"] == [["pytest", "-x"]]
+
+
 def test_handle_issue_accept_writes_label_before_comment(tmp_path, monkeypatch, _jobs_dir, caplog):
     """Label must land before the comment. (`_make_job_record` runs first but
     is local-only — only the two gh writes have observable ordering.)"""
@@ -273,7 +332,7 @@ def test_handle_issue_accept_writes_label_before_comment(tmp_path, monkeypatch, 
     monkeypatch.setattr(gh_api, "comment_on_issue", _rec_comment)
     caplog.set_level(logging.INFO, logger="rae-local-agent.issue_poller")
 
-    issue_poller._handle_issue("owner/repo", issue, str(tmp_path))
+    issue_poller._handle_issue("owner/repo", issue, config.RepoConfig(path=tmp_path))
 
     kinds = [c[0] for c in calls]
     assert kinds == ["label", "comment"]
@@ -312,7 +371,7 @@ def test_handle_issue_accept_label_failure_does_not_enqueue(
     monkeypatch.setattr(gh_api, "comment_on_issue", lambda *a: comments.append(a))
     caplog.set_level(logging.WARNING, logger="rae-local-agent.issue_poller")
 
-    issue_poller._handle_issue("owner/repo", issue, str(tmp_path))
+    issue_poller._handle_issue("owner/repo", issue, config.RepoConfig(path=tmp_path))
 
     # Nothing written to pending.
     assert list((_jobs_dir / "pending").iterdir()) == []
@@ -335,7 +394,7 @@ def test_handle_issue_accept_comment_failure_logs_but_leaves_job_queued(
     )
     caplog.set_level(logging.WARNING, logger="rae-local-agent.issue_poller")
 
-    issue_poller._handle_issue("owner/repo", issue, str(tmp_path))
+    issue_poller._handle_issue("owner/repo", issue, config.RepoConfig(path=tmp_path))
 
     # Job is on disk — worker will still produce a PR.
     assert len(list((_jobs_dir / "pending").iterdir())) == 1
@@ -355,7 +414,7 @@ def test_handle_issue_rejects_on_parse_error(tmp_path, monkeypatch, _jobs_dir, c
     monkeypatch.setattr(gh_api, "add_label", lambda s, n, label: labeled.append((s, n, label)))
     caplog.set_level(logging.INFO, logger="rae-local-agent.issue_poller")
 
-    issue_poller._handle_issue("owner/repo", issue, str(tmp_path))
+    issue_poller._handle_issue("owner/repo", issue, config.RepoConfig(path=tmp_path))
 
     # Nothing enqueued.
     assert list((_jobs_dir / "pending").iterdir()) == []
@@ -382,7 +441,7 @@ def test_handle_issue_rejects_on_enqueue_error(tmp_path, monkeypatch, _jobs_dir)
     bogus_root = tmp_path / "a-file"
     bogus_root.write_text("i am a file")
 
-    issue_poller._handle_issue("owner/repo", issue, str(bogus_root))
+    issue_poller._handle_issue("owner/repo", issue, config.RepoConfig(path=bogus_root))
 
     assert list((_jobs_dir / "pending").iterdir()) == []
     assert len(posted) == 1
@@ -402,7 +461,7 @@ def test_reject_tolerates_comment_failure(tmp_path, monkeypatch, _jobs_dir, capl
     monkeypatch.setattr(gh_api, "add_label", lambda s, n, label: labeled.append((s, n, label)))
     caplog.set_level(logging.WARNING, logger="rae-local-agent.issue_poller")
 
-    issue_poller._handle_issue("owner/repo", issue, str(tmp_path))
+    issue_poller._handle_issue("owner/repo", issue, config.RepoConfig(path=tmp_path))
 
     assert labeled == [("owner/repo", 12, issue_poller.LABEL_INVALID)]
     assert any("reject comment on owner/repo#12 failed" in r.message for r in caplog.records)
