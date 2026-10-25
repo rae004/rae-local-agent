@@ -256,7 +256,9 @@ def _completion_comment(job_id: str, status: dict) -> str:
                 f"\n\nFull log in the worker's artifacts under `jobs/failed/{job_id}/log.txt`."
             )
         else:
-            head = "(no log captured)"
+            # Not "no log file" — the test tool ran and emitted zero bytes
+            # (e.g. plain `false`). Wording picked to match that.
+            head = "(test command emitted no output)"
             tail_note = ""
         return (
             f"Tests failed — the diff was applied in a worktree but the "
