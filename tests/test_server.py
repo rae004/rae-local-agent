@@ -39,19 +39,45 @@ def test_make_job_record_accepts_custom_base_branch(tmp_path: pathlib.Path) -> N
     assert rec["base_branch"] == "develop"
 
 
-def test_make_job_record_default_test_cmd_and_skip_tests(tmp_path: pathlib.Path) -> None:
+def test_make_job_record_default_gate_cmds_and_skip_tests(tmp_path: pathlib.Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     rec = _make_job_record("do X", ["f.py"], str(repo))
-    assert rec["test_cmd"] == ["uv", "run", "pytest", "-q"]
+    assert rec["gate_cmds"] == [["uv", "run", "pytest", "-q"]]
     assert rec["skip_tests"] is False
 
 
-def test_make_job_record_custom_test_cmd(tmp_path: pathlib.Path) -> None:
+def test_make_job_record_test_cmd_wraps_as_single_command_gate(tmp_path: pathlib.Path) -> None:
+    """Back-compat: a single `test_cmd` becomes a one-element `gate_cmds` list."""
     repo = tmp_path / "repo"
     repo.mkdir()
     rec = _make_job_record("do X", ["f.py"], str(repo), test_cmd=["make", "test"])
-    assert rec["test_cmd"] == ["make", "test"]
+    assert rec["gate_cmds"] == [["make", "test"]]
+
+
+def test_make_job_record_custom_gate_cmds_preserved(tmp_path: pathlib.Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rec = _make_job_record(
+        "do X",
+        ["f.py"],
+        str(repo),
+        gate_cmds=[["npm", "run", "lint:fix"], ["npm", "run", "build"]],
+    )
+    assert rec["gate_cmds"] == [["npm", "run", "lint:fix"], ["npm", "run", "build"]]
+
+
+def test_make_job_record_rejects_both_test_cmd_and_gate_cmds(tmp_path: pathlib.Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    with pytest.raises(ValueError, match="either `gate_cmds` or `test_cmd`"):
+        _make_job_record(
+            "do X",
+            ["f.py"],
+            str(repo),
+            test_cmd=["pytest"],
+            gate_cmds=[["pytest"]],
+        )
 
 
 def test_make_job_record_skip_tests_override(tmp_path: pathlib.Path) -> None:

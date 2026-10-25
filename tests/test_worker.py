@@ -43,7 +43,7 @@ def _write_pending(
     scope=None,
     repo_root=None,
     skip_tests: bool = False,
-    test_cmd=None,
+    gate_cmds=None,
     title: str | None = None,
     body: str | None = None,
     group_id: str | None = None,
@@ -55,7 +55,7 @@ def _write_pending(
         "scope": scope if scope is not None else [],
         "repo_root": repo_root or str(jobs_root),
         "base_branch": "main",
-        "test_cmd": test_cmd if test_cmd is not None else ["uv", "run", "pytest", "-q"],
+        "gate_cmds": gate_cmds if gate_cmds is not None else [["uv", "run", "pytest", "-q"]],
         "skip_tests": skip_tests,
         "title": title,
         "body": body,
@@ -110,7 +110,7 @@ def test_tick_recovers_orphaned_running(jobs_root, monkeypatch):
         "scope": [],
         "repo_root": str(jobs_root),
         "base_branch": "main",
-        "test_cmd": ["true"],
+        "gate_cmds": [["true"]],
         "skip_tests": True,
     }
     (jobs_root / "running" / "crashed.json").write_text(json.dumps(rec))
@@ -128,7 +128,7 @@ def test_recovery_precedes_pending(jobs_root, monkeypatch, caplog):
         "scope": [],
         "repo_root": str(jobs_root),
         "base_branch": "main",
-        "test_cmd": ["true"],
+        "gate_cmds": [["true"]],
         "skip_tests": True,
     }
     new = {
@@ -137,7 +137,7 @@ def test_recovery_precedes_pending(jobs_root, monkeypatch, caplog):
         "scope": [],
         "repo_root": str(jobs_root),
         "base_branch": "main",
-        "test_cmd": ["true"],
+        "gate_cmds": [["true"]],
         "skip_tests": True,
     }
     (jobs_root / "running" / "orphan.json").write_text(json.dumps(orphan))
@@ -218,7 +218,7 @@ def test_process_passes_record_fields_through_to_git_ops(jobs_root, monkeypatch)
         "job-fields",
         spec="rename foo",
         repo_root=str(jobs_root),
-        test_cmd=["make", "test"],
+        gate_cmds=[["make", "test"]],
     )
     worker.tick()
 
@@ -228,7 +228,7 @@ def test_process_passes_record_fields_through_to_git_ops(jobs_root, monkeypatch)
     # No explicit title/body on the record → both fall back to the spec.
     assert seen["commit_message"] == "rename foo\n\nrename foo"
     assert seen["diff_text"] == canned
-    assert seen["test_cmd"] == ["make", "test"]
+    assert seen["gate_cmds"] == [["make", "test"]]
 
 
 def test_process_refuses_dirty_tree_without_calling_model(jobs_root, monkeypatch):
@@ -305,7 +305,7 @@ def test_process_passes_none_test_cmd_when_skip_tests_true(jobs_root, monkeypatc
     _write_pending(jobs_root, "job-skip", skip_tests=True)
     worker.tick()
 
-    assert seen["test_cmd"] is None
+    assert seen["gate_cmds"] is None
 
 
 def test_process_passes_default_test_cmd_when_skip_tests_false(jobs_root, monkeypatch):
@@ -318,7 +318,7 @@ def test_process_passes_default_test_cmd_when_skip_tests_false(jobs_root, monkey
     _write_pending(jobs_root, "job-with-tests")
     worker.tick()
 
-    assert seen["test_cmd"] == ["uv", "run", "pytest", "-q"]
+    assert seen["gate_cmds"] == [["uv", "run", "pytest", "-q"]]
 
 
 # ---------- B5 draft PR creation ----------------------------------------

@@ -219,7 +219,7 @@ def test_branch_and_push_runs_test_cmd_and_pushes_on_zero_exit(repo_pair):
         new_branch="rae-local-agent/gate-pass",
         diff_text=_HELLO_DIFF,
         commit_message="s",
-        test_cmd=["true"],
+        gate_cmds=[["true"]],
     )
     result = _run(
         ["git", "--git-dir", str(remote), "branch", "--list", "rae-local-agent/gate-pass"],
@@ -238,7 +238,7 @@ def test_branch_and_push_raises_tests_failed_on_nonzero_exit(repo_pair):
             new_branch="rae-local-agent/gate-fail",
             diff_text=_HELLO_DIFF,
             commit_message="s",
-            test_cmd=["false"],
+            gate_cmds=[["false"]],
         )
     # Nothing was pushed.
     result = _run(
@@ -271,7 +271,7 @@ def test_tests_failed_error_captures_test_output(repo_pair):
             new_branch="rae-local-agent/gate-log",
             diff_text=_HELLO_DIFF,
             commit_message="s",
-            test_cmd=["sh", "-c", script],
+            gate_cmds=[["sh", "-c", script]],
         )
     assert "OUT_LINE" in excinfo.value.log
     assert "ERR_LINE" in excinfo.value.log
@@ -291,7 +291,7 @@ def test_test_cmd_runs_in_worktree_with_applied_diff(repo_pair):
             # grep -q returns 0 if found, 1 if not; invert with ! for failure
             # when it IS found — this test wants to prove the diff is visible,
             # so we expect the inverted grep to exit non-zero → TestsFailedError.
-            test_cmd=["sh", "-c", "! grep -q 'name) -> str' hello.py"],
+            gate_cmds=[["sh", "-c", "! grep -q 'name) -> str' hello.py"]],
         )
 
 
@@ -400,7 +400,7 @@ def test_test_cmd_runs_with_scrubbed_env(repo_pair, monkeypatch):
         new_branch="rae-local-agent/gate-env-scrubbed",
         diff_text=_HELLO_DIFF,
         commit_message="s",
-        test_cmd=["sh", "-c", script],
+        gate_cmds=[["sh", "-c", script]],
     )
 
 
@@ -424,7 +424,7 @@ def test_test_cmd_runs_with_filtered_path(repo_pair, monkeypatch):
         new_branch="rae-local-agent/gate-path-filtered",
         diff_text=_HELLO_DIFF,
         commit_message="s",
-        test_cmd=["sh", "-c", script],
+        gate_cmds=[["sh", "-c", script]],
     )
 
 

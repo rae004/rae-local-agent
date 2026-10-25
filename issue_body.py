@@ -38,6 +38,7 @@ _ALLOWED_KEYS: frozenset[str] = frozenset(
         "scope",
         "base_branch",
         "test_cmd",
+        "gate_cmds",
         "skip_tests",
         "title",
         "body",
@@ -101,11 +102,16 @@ def parse_issue_body(body: str) -> dict[str, Any]:
             f"unknown frontmatter key(s): {sorted(unknown)}; allowed: {sorted(_ALLOWED_KEYS)}"
         )
 
+    if "test_cmd" in fm and "gate_cmds" in fm:
+        raise InvalidIssue("set either `test_cmd` or `gate_cmds` in frontmatter, not both")
+
     out: dict[str, Any] = {"scope": _validate_scope(fm.get("scope"))}
     if "base_branch" in fm:
         out["base_branch"] = _validate_base_branch(fm["base_branch"])
     if "test_cmd" in fm:
         out["test_cmd"] = _validate_test_cmd(fm["test_cmd"])
+    if "gate_cmds" in fm:
+        out["gate_cmds"] = _validate_gate_cmds(fm["gate_cmds"])
     if "skip_tests" in fm:
         out["skip_tests"] = _validate_skip_tests(fm["skip_tests"])
     if "title" in fm:
@@ -187,6 +193,29 @@ def _validate_test_cmd(value: Any) -> list[str] | None:
                 f"`test_cmd[{i}]` must be a string, got {item!r} ({type(item).__name__})"
             )
     return list(value)
+
+
+def _validate_gate_cmds(value: Any) -> list[list[str]] | None:
+    """Validate frontmatter `gate_cmds`: non-empty list of non-empty lists of strings."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        raise InvalidIssue(
+            f"`gate_cmds` must be a non-empty list of commands (list of lists of "
+            f"strings), got {value!r}"
+        )
+    out: list[list[str]] = []
+    for i, cmd in enumerate(value):
+        if not isinstance(cmd, list) or not cmd:
+            raise InvalidIssue(f"`gate_cmds[{i}]` must be a non-empty list of strings, got {cmd!r}")
+        for j, token in enumerate(cmd):
+            if not isinstance(token, str):
+                raise InvalidIssue(
+                    f"`gate_cmds[{i}][{j}]` must be a string, got {token!r} "
+                    f"({type(token).__name__})"
+                )
+        out.append(list(cmd))
+    return out
 
 
 def _validate_skip_tests(value: Any) -> bool:

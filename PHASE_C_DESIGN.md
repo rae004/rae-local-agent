@@ -165,18 +165,38 @@ systemctl --user enable --now rae-local-agent-issue-poller
 
 ## Configuration
 
-`~/.config/rae-local-agent/repos.yaml`:
+`~/.config/rae-local-agent/repos.yaml`. Each repo value is either a
+bare path string (back-compat) or a mapping with `path` + optional
+`gate_cmds`:
 
 ```yaml
 poll_interval_seconds: 300  # 5 min
 repos:
-  rae004/rae-budget: /home/rae004/projects/rae-budget
-  rae004/rae-time-tracker-and-invoice: /home/rae004/projects/rae-time-tracker-and-invoice
+  rae004/rae-budget:
+    path: /home/rae004/projects/rae-budget
+    gate_cmds:
+      - [uv, run, ruff, format, "."]
+      - [uv, run, ruff, check, "."]
+      - [uv, run, pytest, "-q"]
+  rae004/ai-security-digest:
+    path: /home/rae004/projects/ai-security-digest
+    gate_cmds:
+      - [npm, run, lint:fix]
+      - [npm, run, build]
+      - [npm, test]
+  rae004/legacy-repo: /home/rae004/projects/legacy-repo  # bare-string, default gate
 ```
 
 - `poll_interval_seconds` — optional, default 300.
-- `repos` — map from GitHub `owner/name` to absolute local path.
-  Only repos listed here are polled; nothing autodiscovered.
+- `repos` — map from GitHub `owner/name` to either a bare path string
+  (uses the default gate `[["uv", "run", "pytest", "-q"]]`) or a
+  mapping carrying `path` and an optional per-repo `gate_cmds`.
+- `gate_cmds` — list of commands run sequentially between `git apply`
+  and `git commit` in the worker's worktree. First non-zero exit
+  fails the gate and prevents push; per-command headers land in
+  `log.txt`. Issue frontmatter's `gate_cmds` or `test_cmd` overrides
+  the per-repo default when present. Setting both `gate_cmds` and
+  `test_cmd` in one place is an error.
 
 ## Error handling
 

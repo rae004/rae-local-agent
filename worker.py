@@ -71,7 +71,7 @@ log = logging.getLogger("rae-local-agent.worker")
 
 POLL_SECONDS = 1.0
 BRANCH_PREFIX = "rae-local-agent"
-DEFAULT_TEST_CMD = ["uv", "run", "pytest", "-q"]
+DEFAULT_GATE_CMDS: list[list[str]] = [["uv", "run", "pytest", "-q"]]
 
 
 class _StopFlag:
@@ -92,11 +92,24 @@ def _run_transformation_sync(spec: str, scope: list[str], repo_root: str) -> str
     return asyncio.run(run_transformation(spec, scope, repo_root))
 
 
-def _test_cmd_for(record: dict) -> list[str] | None:
-    """None iff tests are skipped, else the record's test_cmd or the default."""
+def _gate_cmds_for(record: dict) -> list[list[str]] | None:
+    """None iff tests are skipped, else the record's gate_cmds.
+
+    Back-compat: records written before Phase D-0 carried `test_cmd`
+    (a single command). If present, wrap it as a single-element
+    gate_cmds list. Should not normally happen on a healthy queue —
+    records in `jobs/pending/` are typically drained between worker
+    deployments — but it's a one-line defensive branch.
+    """
     if record.get("skip_tests"):
         return None
-    return record.get("test_cmd") or DEFAULT_TEST_CMD
+    gate_cmds = record.get("gate_cmds")
+    if gate_cmds:
+        return gate_cmds
+    legacy = record.get("test_cmd")
+    if legacy:
+        return [legacy]
+    return [list(cmd) for cmd in DEFAULT_GATE_CMDS]
 
 
 def _handle_job(record: dict, jid: str) -> tuple[str, str, str, str, str]:
@@ -155,7 +168,7 @@ def _handle_job(record: dict, jid: str) -> tuple[str, str, str, str, str]:
                 new_branch=branch,
                 diff_text=diff,
                 commit_message=commit_message,
-                test_cmd=_test_cmd_for(record),
+                gate_cmds=_gate_cmds_for(record),
             )
         except git_ops.TestsFailedError as e:
             return diff, "tests_failed", "", e.log, ""

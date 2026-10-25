@@ -115,6 +115,36 @@ def _link_target_venv(repo_root: Path, wt: Path) -> None:
         link.symlink_to(venv_src, target_is_directory=True)
 
 
+def _run_gate_cmds(gate_cmds: list[list[str]], wt: Path) -> None:
+    """Run gate commands sequentially in `wt`.
+
+    Each command's stderr is merged into stdout and emitted into a
+    per-command log slice with a header, so a `tests_failed` log makes
+    clear which command died. The first non-zero exit raises
+    `TestsFailedError` carrying everything run up to and including the
+    failure; later commands are not executed.
+    """
+    parts: list[str] = []
+    total = len(gate_cmds)
+    for i, cmd in enumerate(gate_cmds, start=1):
+        header = f"=== gate {i}/{total}: {' '.join(cmd)} ===\n"
+        parts.append(header)
+        tr = subprocess.run(
+            cmd,
+            cwd=wt,
+            env=_scrubbed_test_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        parts.append(tr.stdout)
+        if not tr.stdout.endswith("\n"):
+            parts.append("\n")
+        if tr.returncode != 0:
+            parts.append(f"=== gate {i}/{total} FAILED (rc={tr.returncode}) ===\n")
+            raise TestsFailedError("".join(parts))
+
+
 def is_clean(repo_root: Path) -> bool:
     """True iff `git status --porcelain` is empty in repo_root."""
     result = _run(["git", "status", "--porcelain"], cwd=repo_root)
@@ -127,16 +157,18 @@ def branch_and_push(
     new_branch: str,
     diff_text: str,
     commit_message: str,
-    test_cmd: list[str] | None = None,
+    gate_cmds: list[list[str]] | None = None,
 ) -> None:
     """Land a diff as a pushed branch on origin, isolated via worktree.
 
     Steps: fetch origin/<base>, create a worktree with a fresh branch
-    rooted at origin/<base>, write the diff, `git apply`. If `test_cmd`
-    is given, run it in the worktree with stderr merged into stdout —
-    a non-zero exit raises `TestsFailedError` with the combined output
-    as `.log` and nothing is pushed. On pass, add+commit with a baked-
-    in author, push `-u origin <new_branch>`.
+    rooted at origin/<base>, write the diff, `git apply`. If `gate_cmds`
+    is given, run each command in sequence in the worktree with stderr
+    merged into stdout — the first non-zero exit raises
+    `TestsFailedError` with the concatenated per-command log so the
+    operator can see which gate command died, and nothing is pushed.
+    On pass, add+commit with a baked-in author, push `-u origin
+    <new_branch>`.
 
     Test subprocess env: the worker's `VIRTUAL_ENV`/`UV_PROJECT_ENVIRONMENT`
     and rae-local-agent's `.venv/bin` on PATH are stripped so `uv run`
@@ -174,18 +206,9 @@ def branch_and_push(
             _run(["git", "apply", str(patch)], cwd=wt)
             patch.unlink()
 
-            if test_cmd is not None:
+            if gate_cmds:
                 _link_target_venv(repo_root, wt)
-                tr = subprocess.run(
-                    test_cmd,
-                    cwd=wt,
-                    env=_scrubbed_test_env(),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                )
-                if tr.returncode != 0:
-                    raise TestsFailedError(tr.stdout)
+                _run_gate_cmds(gate_cmds, wt)
 
             _run(["git", "add", "-A"], cwd=wt)
             _run(

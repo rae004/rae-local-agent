@@ -100,7 +100,12 @@ async def apply_transformation(
 # MILESTONES.md for the slice shape.
 
 
-DEFAULT_TEST_CMD = ["uv", "run", "pytest", "-q"]
+DEFAULT_GATE_CMDS: list[list[str]] = [["uv", "run", "pytest", "-q"]]
+
+# Kept for back-compat with existing MCP callers; equivalent to the first
+# (and only) entry of DEFAULT_GATE_CMDS. New code should reference the
+# `gate_cmds` plural directly.
+DEFAULT_TEST_CMD: list[str] = list(DEFAULT_GATE_CMDS[0])
 
 
 def _make_job_record(
@@ -109,13 +114,21 @@ def _make_job_record(
     repo_root: str,
     base_branch: str = "main",
     test_cmd: list[str] | None = None,
+    gate_cmds: list[list[str]] | None = None,
     skip_tests: bool = False,
     title: str | None = None,
     body: str | None = None,
     group_id: str | None = None,
 ) -> dict:
-    """Build the on-disk job record. Raises if repo_root is not a directory
-    or if `group_id` is given but malformed."""
+    """Build the on-disk job record. Raises if repo_root is not a directory,
+    if `group_id` is given but malformed, or if both `test_cmd` and
+    `gate_cmds` are supplied (ambiguous).
+
+    `gate_cmds` is the preferred field: a list of commands run sequentially
+    between apply and commit, first non-zero fails. `test_cmd` is kept as
+    a back-compat alias for a single-command gate; passing it is equivalent
+    to passing `gate_cmds=[test_cmd]`.
+    """
     root = Path(repo_root).resolve()
     if not root.is_dir():
         raise ValueError(f"repo_root is not a directory: {repo_root}")
@@ -124,6 +137,16 @@ def _make_job_record(
             f"group_id must match {_GROUP_ID_PATTERN.pattern!r} "
             f"(lowercase alnum + hyphens, up to 63 chars, starts with alnum); got {group_id!r}"
         )
+    if gate_cmds is not None and test_cmd is not None:
+        raise ValueError("pass either `gate_cmds` or `test_cmd`, not both")
+
+    if gate_cmds is not None:
+        final_gate = [list(cmd) for cmd in gate_cmds]
+    elif test_cmd is not None:
+        final_gate = [list(test_cmd)]
+    else:
+        final_gate = [list(cmd) for cmd in DEFAULT_GATE_CMDS]
+
     return {
         "id": job.new_id(),
         "created_at": datetime.now(UTC).isoformat(),
@@ -131,7 +154,7 @@ def _make_job_record(
         "scope": scope,
         "repo_root": str(root),
         "base_branch": base_branch,
-        "test_cmd": test_cmd if test_cmd is not None else list(DEFAULT_TEST_CMD),
+        "gate_cmds": final_gate,
         "skip_tests": skip_tests,
         "title": title,
         "body": body,
@@ -177,10 +200,25 @@ async def enqueue_job(
         list[str] | None,
         Field(
             description=(
-                "Shell-safe argv the worker runs in the applied worktree after "
-                "`git apply` and before `git commit`. Non-zero exit → job moves "
-                "to failed/<id>/ with test output in log.txt, branch is NOT "
-                "pushed. Defaults to `uv run pytest -q`."
+                "DEPRECATED alias for a single-command `gate_cmds`. Pass "
+                "`gate_cmds=[[...]]` instead. Still works for back-compat; "
+                "passing both this and `gate_cmds` is a ValueError."
+            )
+        ),
+    ] = None,
+    gate_cmds: Annotated[
+        list[list[str]] | None,
+        Field(
+            description=(
+                "List of commands the worker runs in the applied worktree "
+                "between `git apply` and `git commit`, in order. The first "
+                "non-zero exit fails the gate; the job moves to "
+                "failed/<id>/ with per-command output + headers in log.txt, "
+                "no branch pushed. Defaults to `[['uv', 'run', 'pytest', "
+                "'-q']]`. Use for repos that chain format-fix + build/"
+                "typecheck + test, e.g. "
+                "`[['npm','run','lint:fix'], ['npm','run','build'], "
+                "['npm','test']]`."
             )
         ),
     ] = None,
@@ -252,6 +290,7 @@ async def enqueue_job(
         repo_root,
         base_branch,
         test_cmd=test_cmd,
+        gate_cmds=gate_cmds,
         skip_tests=skip_tests,
         title=title,
         body=body,
