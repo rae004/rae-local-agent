@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.0](https://github.com/rae004/rae-local-agent/compare/v0.13.0...v0.14.0) (2026-10-25)
+
+
+### Features
+
+* C4 completion comment-back ([#44](https://github.com/rae004/rae-local-agent/issues/44)) ([cf78977](https://github.com/rae004/rae-local-agent/commit/cf789776e6a093e6cfd316da7d7495e1ea17405a))
+* gate_cmds — per-repo polyglot gates (D-0) ([#52](https://github.com/rae004/rae-local-agent/issues/52)) ([b07b451](https://github.com/rae004/rae-local-agent/commit/b07b45173c796bade86d06c7db78ca6240e0d976))
+
+
+### Documentation
+
+* Phase C closeout — C4 runbook landed, README + MILESTONES ([#51](https://github.com/rae004/rae-local-agent/issues/51)) ([fdd53b8](https://github.com/rae004/rae-local-agent/commit/fdd53b893ac335eeac0049a33976c41e499d4207))
+
 ## [0.13.0](https://github.com/rae004/rae-local-agent/compare/v0.12.0...v0.13.0) (2026-10-19)
 
 
