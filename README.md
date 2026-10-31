@@ -468,6 +468,15 @@ See `server.py`'s module docstring for the long version.
 - **One file at a time.** Multi-file scope works, but each file is a
   separate model call. For large scopes, consider splitting across
   conversations.
+- **Multi-file scope is all-or-nothing.** A single file-level failure
+  (timeout, runaway generation, parse error) aborts the whole run and
+  loses the work done on earlier files. Directory scope expansion
+  (PR #58) multiplies this risk — a 7-file directory batch depends on
+  all 7 model calls succeeding. **Prefer single-file issues until the
+  Phase E resilience layer lands** (`PHASE_E_DESIGN.md`), which adds
+  per-file checkpointing, soft/hard error classification, and
+  pre-flight sizing so partial progress survives and oversized files
+  fail fast.
 - **Byte cap: 100 KB per file.** Raise `MAX_FILE_BYTES` in `server.py`
   if you need bigger scopes; mind your model's context window.
 - **No streaming.** The whole file is sent in one request and the whole
