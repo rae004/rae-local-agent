@@ -27,9 +27,7 @@ MAX_FILE_BYTES = 100_000
 # Extensions treated as source files during directory expansion. Direct file
 # entries in `scope` bypass this filter — this only governs what gets picked
 # up when a scope entry is a directory.
-_SCOPE_FILE_EXTS = frozenset(
-    {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
-)
+_SCOPE_FILE_EXTS = frozenset({".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"})
 
 # Directory names pruned during directory expansion.
 _SCOPE_SKIP_DIRS = frozenset(
