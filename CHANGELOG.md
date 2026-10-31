@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.2](https://github.com/rae004/rae-local-agent/compare/v0.16.1...v0.16.2) (2026-10-31)
+
+
+### Documentation
+
+* Phase E resilience design (parked) ([#64](https://github.com/rae004/rae-local-agent/issues/64)) ([d3ad117](https://github.com/rae004/rae-local-agent/commit/d3ad117869f97ddb264ae97da0574c0abb02e245))
+* README caveat on multi-file scope being all-or-nothing ([#65](https://github.com/rae004/rae-local-agent/issues/65)) ([071cfdb](https://github.com/rae004/rae-local-agent/commit/071cfdb451f41a6a79881c0ad67cf5709100d711))
+
 ## [0.16.1](https://github.com/rae004/rae-local-agent/compare/v0.16.0...v0.16.1) (2026-10-31)
 
 
