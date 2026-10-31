@@ -11,7 +11,9 @@ from __future__ import annotations
 import pathlib
 import subprocess
 
-from transform import _diff, _strip_fences
+import pytest
+
+from transform import _diff, _expand_scope, _strip_fences
 
 # ---------- _strip_fences -------------------------------------------------
 
@@ -83,3 +85,83 @@ def test_diff_output_applies_via_git_apply(tmp_path: pathlib.Path) -> None:
 
     subprocess.run(["git", "apply", "p.diff"], cwd=tmp_path, check=True)
     assert (tmp_path / "foo.py").read_text() == rewritten
+
+
+# ---------- _expand_scope -------------------------------------------------
+
+
+def test_expand_scope_passes_files_through(tmp_path: pathlib.Path) -> None:
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.ts").write_text("")
+    assert _expand_scope(tmp_path, ["a.py", "b.ts"]) == ["a.py", "b.ts"]
+
+
+def test_expand_scope_file_entry_bypasses_extension_filter(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Direct file entries aren't filtered — only directory expansion is."""
+    (tmp_path / "notes.md").write_text("")
+    assert _expand_scope(tmp_path, ["notes.md"]) == ["notes.md"]
+
+
+def test_expand_scope_directory_recurses_and_filters(
+    tmp_path: pathlib.Path,
+) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "a.ts").write_text("")
+    (tmp_path / "lib" / "sub").mkdir()
+    (tmp_path / "lib" / "sub" / "b.tsx").write_text("")
+    (tmp_path / "lib" / "README.md").write_text("")  # filtered out
+
+    result = _expand_scope(tmp_path, ["lib"])
+    assert result == [str(pathlib.Path("lib/a.ts")), str(pathlib.Path("lib/sub/b.tsx"))]
+
+
+def test_expand_scope_prunes_skip_dirs(tmp_path: pathlib.Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "keep.ts").write_text("")
+    (tmp_path / "src" / "node_modules").mkdir()
+    (tmp_path / "src" / "node_modules" / "ignored.ts").write_text("")
+    (tmp_path / "src" / "__pycache__").mkdir()
+    (tmp_path / "src" / "__pycache__" / "cached.py").write_text("")
+
+    assert _expand_scope(tmp_path, ["src"]) == [str(pathlib.Path("src/keep.ts"))]
+
+
+def test_expand_scope_empty_directory_raises(tmp_path: pathlib.Path) -> None:
+    (tmp_path / "empty").mkdir()
+    (tmp_path / "empty" / "README.md").write_text("")  # no source files
+
+    with pytest.raises(ValueError, match="expanded to zero source files"):
+        _expand_scope(tmp_path, ["empty"])
+
+
+def test_expand_scope_nonexistent_entry_raises(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(ValueError, match="does not exist"):
+        _expand_scope(tmp_path, ["nope/"])
+
+
+def test_expand_scope_path_escape_raises(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(ValueError, match="escapes repo_root"):
+        _expand_scope(tmp_path, ["../outside"])
+
+
+def test_expand_scope_mixed_file_and_directory(tmp_path: pathlib.Path) -> None:
+    (tmp_path / "entry.py").write_text("")
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "a.ts").write_text("")
+
+    assert _expand_scope(tmp_path, ["entry.py", "lib"]) == [
+        "entry.py",
+        str(pathlib.Path("lib/a.ts")),
+    ]
+
+
+def test_expand_scope_directory_output_is_sorted(tmp_path: pathlib.Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "z.ts").write_text("")
+    (tmp_path / "lib" / "a.ts").write_text("")
+    (tmp_path / "lib" / "m.ts").write_text("")
+
+    result = _expand_scope(tmp_path, ["lib"])
+    assert result == sorted(result)

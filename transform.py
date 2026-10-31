@@ -24,6 +24,27 @@ MODEL = os.environ.get("LOCAL_AGENT_MODEL", "qwen2.5-coder:32b")
 TIMEOUT_SECONDS = 600
 MAX_FILE_BYTES = 100_000
 
+# Extensions treated as source files during directory expansion. Direct file
+# entries in `scope` bypass this filter — this only governs what gets picked
+# up when a scope entry is a directory.
+_SCOPE_FILE_EXTS = frozenset({".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"})
+
+# Directory names pruned during directory expansion.
+_SCOPE_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "dist",
+        "build",
+        ".next",
+        "cdk.out",
+        ".yarn",
+    }
+)
+
 SYSTEM_PROMPT = """You are a code transformation worker. Given a transformation \
 spec and the current contents of a file, produce the REWRITTEN contents of that \
 file after applying the transformation.
@@ -36,6 +57,43 @@ including whitespace, blank lines, imports, docstrings, and comments.
 - If the spec has nothing to do in this file, return the file UNCHANGED \
 (byte-for-byte identical to the input).
 """
+
+
+def _expand_scope(root: Path, scope: list[str]) -> list[str]:
+    """Expand directory entries in `scope` to the contained source files.
+
+    File entries pass through unchanged. Directory entries are walked
+    recursively; files with a suffix in `_SCOPE_FILE_EXTS` are kept, and
+    directories in `_SCOPE_SKIP_DIRS` are pruned. Order is deterministic
+    (sorted by relative path). Raises `ValueError` for path escape,
+    nonexistent entry, or a directory that expands to zero source files.
+    """
+    expanded: list[str] = []
+    for rel in scope:
+        p = (root / rel).resolve()
+        try:
+            p.relative_to(root)
+        except ValueError as e:
+            raise ValueError(f"path escapes repo_root: {rel!r}") from e
+        if p.is_file():
+            expanded.append(rel)
+            continue
+        if not p.is_dir():
+            raise ValueError(f"scope entry does not exist: {rel!r}")
+        found: list[str] = []
+        for dirpath, dirnames, filenames in os.walk(p):
+            dirnames[:] = [d for d in dirnames if d not in _SCOPE_SKIP_DIRS]
+            dir_rel = Path(dirpath).relative_to(root)
+            for fname in filenames:
+                if Path(fname).suffix.lower() in _SCOPE_FILE_EXTS:
+                    found.append(str(dir_rel / fname))
+        if not found:
+            raise ValueError(
+                f"directory scope {rel!r} expanded to zero source files; "
+                f"allowed extensions: {sorted(_SCOPE_FILE_EXTS)}"
+            )
+        expanded.extend(sorted(found))
+    return expanded
 
 
 def _read_scoped_file(root: Path, rel: str) -> str:
@@ -119,9 +177,11 @@ async def run_transformation(spec: str, scope: list[str], repo_root: str) -> str
     if not root.is_dir():
         raise ValueError(f"repo_root is not a directory: {repo_root}")
 
+    expanded_scope = _expand_scope(root, scope)
+
     diffs: list[str] = []
     async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
-        for rel in scope:
+        for rel in expanded_scope:
             original = _read_scoped_file(root, rel)
             rewritten = await _rewrite_one(client, spec, rel, original)
             file_diff = _diff(rel, original, rewritten)
