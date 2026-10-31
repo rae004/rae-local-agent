@@ -165,3 +165,32 @@ def test_expand_scope_directory_output_is_sorted(tmp_path: pathlib.Path) -> None
 
     result = _expand_scope(tmp_path, ["lib"])
     assert result == sorted(result)
+
+
+def test_expand_scope_filters_untracked_files_in_git_repo(
+    tmp_path: pathlib.Path,
+) -> None:
+    """In a git repo, directory expansion skips files git doesn't track —
+    this is how a TypeScript repo's `.d.ts` / `.js` build artifacts stop
+    getting swept in alongside the `.ts` sources after `npm run build`.
+    """
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "source.ts").write_text("")  # tracked
+    (tmp_path / "lib" / "generated.d.ts").write_text("")  # tracked for now
+    (tmp_path / "lib" / "artifact.js").write_text("")  # NOT tracked
+
+    subprocess.run(
+        ["git", "add", "lib/source.ts", "lib/generated.d.ts"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+
+    result = _expand_scope(tmp_path, ["lib"])
+    assert str(pathlib.Path("lib/source.ts")) in result
+    assert str(pathlib.Path("lib/generated.d.ts")) in result
+    assert str(pathlib.Path("lib/artifact.js")) not in result

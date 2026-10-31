@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import difflib
 import os
+import subprocess
 from pathlib import Path
 
 import httpx
@@ -84,15 +85,42 @@ including whitespace, blank lines, imports, docstrings, and comments.
 """
 
 
+def _tracked_files(root: Path) -> set[str]:
+    """Return the set of repo-relative paths that git tracks in `root`.
+
+    Used to filter directory-expansion candidates to only files the repo
+    actually tracks — so gitignored build artifacts (e.g. a TypeScript
+    repo's `.d.ts` / `.js` outputs sitting next to `.ts` sources after
+    `npm run build`) are not swept into scope. An empty return means "no
+    filter" — either git isn't available or `root` isn't a repo — and
+    callers fall back to the pure extension filter.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return set()
+    return set(result.stdout.splitlines())
+
+
 def _expand_scope(root: Path, scope: list[str]) -> list[str]:
     """Expand directory entries in `scope` to the contained source files.
 
     File entries pass through unchanged. Directory entries are walked
-    recursively; files with a suffix in `_SCOPE_FILE_EXTS` are kept, and
-    directories in `_SCOPE_SKIP_DIRS` are pruned. Order is deterministic
-    (sorted by relative path). Raises `ValueError` for path escape,
-    nonexistent entry, or a directory that expands to zero source files.
+    recursively; files with a suffix in `_SCOPE_FILE_EXTS` are kept,
+    directories in `_SCOPE_SKIP_DIRS` are pruned, and (when `root` is a
+    git repo) any file not tracked by git is dropped — this filters out
+    build artifacts without needing a hand-maintained extension exclude
+    list. Order is deterministic (sorted by relative path). Raises
+    `ValueError` for path escape, nonexistent entry, or a directory
+    that expands to zero source files.
     """
+    tracked: set[str] | None = None  # lazy; computed on first directory entry
     expanded: list[str] = []
     for rel in scope:
         p = (root / rel).resolve()
@@ -105,13 +133,19 @@ def _expand_scope(root: Path, scope: list[str]) -> list[str]:
             continue
         if not p.is_dir():
             raise ValueError(f"scope entry does not exist: {rel!r}")
+        if tracked is None:
+            tracked = _tracked_files(root)
         found: list[str] = []
         for dirpath, dirnames, filenames in os.walk(p):
             dirnames[:] = [d for d in dirnames if d not in _SCOPE_SKIP_DIRS]
             dir_rel = Path(dirpath).relative_to(root)
             for fname in filenames:
-                if Path(fname).suffix.lower() in _SCOPE_FILE_EXTS:
-                    found.append(str(dir_rel / fname))
+                if Path(fname).suffix.lower() not in _SCOPE_FILE_EXTS:
+                    continue
+                rel_path = str(dir_rel / fname)
+                if tracked and rel_path not in tracked:
+                    continue  # gitignored build artifact or untracked file
+                found.append(rel_path)
         if not found:
             raise ValueError(
                 f"directory scope {rel!r} expanded to zero source files; "
