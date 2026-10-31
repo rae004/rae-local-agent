@@ -31,6 +31,15 @@ MODEL = os.environ.get("LOCAL_AGENT_MODEL", "qwen2.5-coder:32b")
 # fits in VRAM and generation stays on GPU.
 OLLAMA_NUM_CTX = 16384
 
+# Max output tokens per request. Catches runaway generation (observed on
+# ai-security-digest#144: 60 K+ tokens emitted for one file before the
+# 45 min wall-clock timeout fired). The largest legitimate rewrite in the
+# current workload (`lib/stacks/orchestration-stack.ts`, ~3540 tokens)
+# fits well under this with 2× headroom. 8192 output tokens at the
+# observed ~26 t/s is ~5 min — a runaway now fails in minutes, not
+# three-quarters of an hour.
+OLLAMA_NUM_PREDICT = 8192
+
 # Split timeouts: a short connect bound catches a dead/unreachable Ollama
 # server fast, and a long read/write/pool budget lets a legitimately-slow
 # generation finish. 45 min is a per-file budget, not a stuck-model
@@ -175,7 +184,11 @@ async def _rewrite_one(client: httpx.AsyncClient, spec: str, rel: str, content: 
             "system": SYSTEM_PROMPT,
             "prompt": _build_user_prompt(spec, rel, content),
             "stream": False,
-            "options": {"temperature": 0.1, "num_ctx": OLLAMA_NUM_CTX},
+            "options": {
+                "temperature": 0.1,
+                "num_ctx": OLLAMA_NUM_CTX,
+                "num_predict": OLLAMA_NUM_PREDICT,
+            },
         },
     )
     response.raise_for_status()
