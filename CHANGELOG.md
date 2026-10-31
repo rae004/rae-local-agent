@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/rae004/rae-local-agent/compare/v0.16.0...v0.16.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **worker:** pin Ollama num_ctx=16384 to keep model on GPU ([#61](https://github.com/rae004/rae-local-agent/issues/61)) ([b8b350c](https://github.com/rae004/rae-local-agent/commit/b8b350cfa72ba14815eeba26000b142885ebd726))
+
 ## [0.16.0](https://github.com/rae004/rae-local-agent/compare/v0.15.0...v0.16.0) (2026-10-31)
 
 
