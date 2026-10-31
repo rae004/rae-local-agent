@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.3](https://github.com/rae004/rae-local-agent/compare/v0.16.2...v0.16.3) (2026-10-31)
+
+
+### Bug Fixes
+
+* **worker:** cap Ollama num_predict at 8192 to catch runaway generation ([#63](https://github.com/rae004/rae-local-agent/issues/63)) ([4273299](https://github.com/rae004/rae-local-agent/commit/427329908ce685f796f5201f11ba6e740a6862e2))
+* **worker:** filter directory-expansion to git-tracked files only ([#68](https://github.com/rae004/rae-local-agent/issues/68)) ([4da9bf6](https://github.com/rae004/rae-local-agent/commit/4da9bf6bd7aa4f712a41f04b234a3d2a789f7cf2))
+
 ## [0.16.2](https://github.com/rae004/rae-local-agent/compare/v0.16.1...v0.16.2) (2026-10-31)
 
 
