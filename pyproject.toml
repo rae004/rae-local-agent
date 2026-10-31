@@ -1,6 +1,6 @@
 [project]
 name = "rae-local-agent"
-version = "0.16.1"
+version = "0.16.2"
 description = "MCP server exposing a local Ollama coder model as a code-transformation tool for Claude Code"
 requires-python = ">=3.12"
 dependencies = [
