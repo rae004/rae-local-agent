@@ -22,6 +22,15 @@ _OLLAMA_HOST = os.environ.get("LOCAL_AGENT_OLLAMA_HOST", "http://localhost:11434
 OLLAMA_URL = f"{_OLLAMA_HOST.rstrip('/')}/api/generate"
 MODEL = os.environ.get("LOCAL_AGENT_MODEL", "qwen2.5-coder:32b")
 
+# Context size sent per request. Ollama's default for this model is 32768,
+# which allocates ~8 GiB of KV cache. Combined with the ~18.5 GiB of weights
+# that overflows a 24 GiB GPU and forces partial CPU offload, dropping
+# throughput to ~3 t/s. This workload sends one file + prompts per call
+# (bounded at `MAX_FILE_BYTES = 100_000`, worst case ~25 K tokens), so 16 K
+# gives ~2× headroom while shrinking the KV cache to ~4 GiB — model + cache
+# fits in VRAM and generation stays on GPU.
+OLLAMA_NUM_CTX = 16384
+
 # Split timeouts: a short connect bound catches a dead/unreachable Ollama
 # server fast, and a long read/write/pool budget lets a legitimately-slow
 # generation finish. 45 min is a per-file budget, not a stuck-model
@@ -166,7 +175,7 @@ async def _rewrite_one(client: httpx.AsyncClient, spec: str, rel: str, content: 
             "system": SYSTEM_PROMPT,
             "prompt": _build_user_prompt(spec, rel, content),
             "stream": False,
-            "options": {"temperature": 0.1},
+            "options": {"temperature": 0.1, "num_ctx": OLLAMA_NUM_CTX},
         },
     )
     response.raise_for_status()
