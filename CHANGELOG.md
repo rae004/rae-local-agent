@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/rae004/rae-local-agent/compare/v0.15.0...v0.16.0) (2026-10-31)
+
+
+### Features
+
+* **worker:** expand directory entries in scope to source files ([#58](https://github.com/rae004/rae-local-agent/issues/58)) ([5d49949](https://github.com/rae004/rae-local-agent/commit/5d49949d9de7183d14c5fab84f1e95b865213fcb))
+
 ## [0.15.0](https://github.com/rae004/rae-local-agent/compare/v0.14.0...v0.15.0) (2026-10-25)
 
 
