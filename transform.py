@@ -21,7 +21,14 @@ import httpx
 _OLLAMA_HOST = os.environ.get("LOCAL_AGENT_OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_URL = f"{_OLLAMA_HOST.rstrip('/')}/api/generate"
 MODEL = os.environ.get("LOCAL_AGENT_MODEL", "qwen2.5-coder:32b")
-TIMEOUT_SECONDS = 600
+
+# Split timeouts: a short connect bound catches a dead/unreachable Ollama
+# server fast, and a long read/write/pool budget lets a legitimately-slow
+# generation finish. 45 min is a per-file budget, not a stuck-model
+# detector — httpx doesn't offer a stream-level idle timeout, so a model
+# producing tokens at any rate will keep the connection alive.
+OLLAMA_TIMEOUT = httpx.Timeout(2700.0, connect=10.0)
+
 MAX_FILE_BYTES = 100_000
 
 # Extensions treated as source files during directory expansion. Direct file
@@ -180,7 +187,7 @@ async def run_transformation(spec: str, scope: list[str], repo_root: str) -> str
     expanded_scope = _expand_scope(root, scope)
 
     diffs: list[str] = []
-    async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
         for rel in expanded_scope:
             original = _read_scoped_file(root, rel)
             rewritten = await _rewrite_one(client, spec, rel, original)
