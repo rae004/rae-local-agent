@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.18.0](https://github.com/rae004/rae-local-agent/compare/v0.17.0...v0.18.0) (2026-11-15)
+
+
+### Features
+
+* repository settings as code with required CI checks ([#81](https://github.com/rae004/rae-local-agent/issues/81)) ([546d5e4](https://github.com/rae004/rae-local-agent/commit/546d5e46ebca5b9a13314b5bff833c05b835acce))
+
+
+### Bug Fixes
+
+* **deps:** bump certifi and opentelemetry-api past Dependabot alerts ([#85](https://github.com/rae004/rae-local-agent/issues/85)) ([7e8060c](https://github.com/rae004/rae-local-agent/commit/7e8060cf644f9c3511ebe6dbedb932b0ccae0de4))
+
 ## [0.17.0](https://github.com/rae004/rae-local-agent/compare/v0.16.3...v0.17.0) (2026-11-15)
 
 
