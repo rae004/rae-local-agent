@@ -501,6 +501,12 @@ Commits use [Conventional Commits](https://www.conventionalcommits.org/)
 (`feat:`, `fix:`, `chore:`, …) — release-please reads them to open release PRs
 that bump the version in `pyproject.toml` and update `CHANGELOG.md`.
 
+GitHub repository settings (merge options, branch ruleset with required CI
+checks, Actions permissions) are kept as code in
+[`.github/repo/`](.github/repo/). `python3 scripts/repo_settings.py diff`
+shows drift against the live repo, `apply` pushes the files (needs admin);
+CI diffs on any PR that touches that folder.
+
 ## License
 
 MIT.
