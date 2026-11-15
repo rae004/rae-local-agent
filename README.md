@@ -119,12 +119,12 @@ every shape of worker outcome correctly.
 
 ### Operating the service
 
-Prereqs on each repo in `repos.yaml`:
+Prereqs on each repo in `repos.yaml` — the four poller labels, defined
+in [`.github/repo/labels.json`](.github/repo/labels.json):
 
 ```bash
-for L in local-agent agent-queued agent-invalid agent-complete; do
-  gh label create "$L" --repo <owner>/<repo>
-done
+uv run python scripts/polled_repo_labels.py diff    # exit 1 on drift
+uv run python scripts/polled_repo_labels.py apply   # create/patch on every polled repo
 ```
 
 Enable the service once labels + config are in place:

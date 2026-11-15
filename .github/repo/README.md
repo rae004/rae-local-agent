@@ -25,6 +25,7 @@ secret (fine-grained PAT, Administration: read) is set. Applying is always done 
 
 - Dependabot alerts must be on before `security_and_analysis.dependabot_security_updates` can
   be enabled: `gh api -X PUT repos/{owner}/{repo}/vulnerability-alerts` (204 = on).
-- `labels.json` manages the four poller labels on **this** repo only. The other repos in
-  `repos.yaml` still need them created by hand (see the main README's "Operating the
-  service" section) — the script scopes itself to the repo the git remote points at.
+- `repo_settings.py` manages the four poller labels on **this** repo only (it scopes itself
+  to the repo the git remote points at). For every repo the poller watches, run
+  `uv run python scripts/polled_repo_labels.py {diff,apply}` — it reads the slugs from the
+  machine-local `repos.yaml`, which is also why CI can't check that drift.
