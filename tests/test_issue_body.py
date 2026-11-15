@@ -12,9 +12,8 @@ from textwrap import dedent
 
 import pytest
 
-import issue_body
 import server
-from issue_body import InvalidIssue, parse_issue_body
+from issue_body import _GROUP_ID_PATTERN, InvalidIssue, parse_issue_body
 
 # ---------- happy paths -------------------------------------------------
 
@@ -172,7 +171,7 @@ def test_round_trip_through_make_job_record(tmp_path):
 
 def test_round_trip_group_id_pattern_matches_server():
     """Belt-and-braces: parser and server share the exact same regex string."""
-    assert issue_body._GROUP_ID_PATTERN.pattern == server._GROUP_ID_PATTERN.pattern
+    assert _GROUP_ID_PATTERN.pattern == server._GROUP_ID_PATTERN.pattern
 
 
 # ---------- frontmatter structure errors --------------------------------
