@@ -167,6 +167,38 @@ def check_rulesets(apply: bool) -> int:
     return drifted
 
 
+def check_labels(apply: bool) -> int:
+    """Issue labels from `labels.json` (a list of create-label bodies).
+
+    Matched to live labels by exact name; extra live labels are
+    ignored, same as extra keys elsewhere. The file is optional so the
+    script stays drop-in portable to repos that don't manage labels.
+    """
+    file = ROOT / "labels.json"
+    if not file.exists():
+        return 0
+    drifted = 0
+    live = {label["name"]: label for label in gh("GET", f"{REPO}/labels?per_page=100") or []}
+    for want in load(file):
+        name = f"labels/{want['name']}"
+        have = live.get(want["name"])
+        if have is None:
+            print(f"  DRIFT    {name} (not on GitHub)")
+            drifted += 1
+            if apply:
+                gh("POST", f"{REPO}/labels", want)
+                print(f"  created  {name}")
+            continue
+        changes, _ = drift(want, have)
+        report(name, changes, [])
+        if changes:
+            drifted += 1
+            if apply:
+                gh("PATCH", f"{REPO}/labels/{want['name']}", want)
+                print(f"  applied  {name}")
+    return drifted
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2 or argv[1] not in {"diff", "apply"}:
         print(__doc__)
@@ -174,7 +206,7 @@ def main(argv: list[str]) -> int:
     apply = argv[1] == "apply"
     print(f"{'Applying' if apply else 'Comparing'} .github/repo against GitHub")
     try:
-        drifted = check_targets(apply) + check_rulesets(apply)
+        drifted = check_targets(apply) + check_rulesets(apply) + check_labels(apply)
     except ApiError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

@@ -10,6 +10,7 @@ these with the live repo and applies them. (Pattern borrowed from `rae-local-cha
 | `actions-permissions.json` | `PUT …/actions/permissions` | which Actions may run |
 | `actions-workflow.json` | `PUT …/actions/permissions/workflow` | `GITHUB_TOKEN` defaults; `can_approve_pull_request_reviews` lets release-please open PRs |
 | `rulesets/*.json` | `POST`/`PUT …/rulesets` | matched to the live ruleset by `name`; `main` requires the CI `check` job to pass before merge |
+| `labels.json` | `POST`/`PATCH …/labels` | the four poller labels, matched by name; extra live labels are ignored (file is optional, our addition to the pattern) |
 
 ```
 python3 scripts/repo_settings.py diff    # show drift between these files and the live repo (exit 1 if any)
@@ -24,6 +25,6 @@ secret (fine-grained PAT, Administration: read) is set. Applying is always done 
 
 - Dependabot alerts must be on before `security_and_analysis.dependabot_security_updates` can
   be enabled: `gh api -X PUT repos/{owner}/{repo}/vulnerability-alerts` (204 = on).
-- The four poller labels on each repo in `repos.yaml` (see the main README's "Operating the
-  service" section) are per-polled-repo, not settings of this repo, so they're not managed
-  here either.
+- `labels.json` manages the four poller labels on **this** repo only. The other repos in
+  `repos.yaml` still need them created by hand (see the main README's "Operating the
+  service" section) — the script scopes itself to the repo the git remote points at.
