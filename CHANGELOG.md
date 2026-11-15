@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.1](https://github.com/rae004/rae-local-agent/compare/v0.19.0...v0.19.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* **tests:** import each module one way, not both ([#88](https://github.com/rae004/rae-local-agent/issues/88)) ([f7dd308](https://github.com/rae004/rae-local-agent/commit/f7dd308ddb5489de0c4dd3f123f1f544de40f047))
+
 ## [0.19.0](https://github.com/rae004/rae-local-agent/compare/v0.18.0...v0.19.0) (2026-11-15)
 
 
