@@ -205,16 +205,21 @@ def _adopt_pass(repo_slug: str, repo_cfg: RepoConfig) -> int:
 
 
 def _extract_job_id(comments: list[str]) -> str | None:
-    """First `rae-local-agent:job_id=X` tag in any comment, or None.
+    """Last `rae-local-agent:job_id=X` tag in any comment, or None.
 
-    Comments are scanned in posted order; the adopt pass drops exactly
-    one tag per adoption, so "first match" is "the one we care about".
+    Comments are scanned in posted order and the adopt pass drops one
+    tag per adoption, so the last match is the newest adoption's. A
+    retry cycle (agent-* labels removed, issue re-adopted) posts a new
+    adopt comment after the old one; taking the last match makes the
+    completion pass track the new job instead of the already-terminal
+    old one.
     """
+    job_id: str | None = None
     for body in comments:
         m = _JOB_ID_TAG_RE.search(body or "")
         if m is not None:
-            return m.group(1)
-    return None
+            job_id = m.group(1)
+    return job_id
 
 
 def _lookup_job_status(job_id: str) -> dict | None:
