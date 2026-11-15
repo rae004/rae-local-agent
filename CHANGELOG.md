@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/rae004/rae-local-agent/compare/v0.18.0...v0.19.0) (2026-11-15)
+
+
+### Features
+
+* polled_repo_labels script syncs poller labels across all repos ([#86](https://github.com/rae004/rae-local-agent/issues/86)) ([eaa5f4e](https://github.com/rae004/rae-local-agent/commit/eaa5f4e519d1c6c78ccd0e8bec0ebd0997367ef4))
+
 ## [0.18.0](https://github.com/rae004/rae-local-agent/compare/v0.17.0...v0.18.0) (2026-11-15)
 
 
