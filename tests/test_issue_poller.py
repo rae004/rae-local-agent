@@ -526,14 +526,15 @@ def test_extract_job_id_returns_none_when_absent():
     assert issue_poller._extract_job_id(["one", "two", ""]) is None
 
 
-def test_extract_job_id_first_match_wins():
-    """Only the adopt pass should ever leave this tag; if there are two,
-    something weird is happening — take the first (= earliest posted)."""
+def test_extract_job_id_last_match_wins():
+    """A retry cycle posts a newer adopt comment after the old one;
+    the completion pass must track the newest job, so the last tag
+    (= latest posted) wins."""
     comments = [
         "<!-- rae-local-agent:job_id=first -->",
         "<!-- rae-local-agent:job_id=second -->",
     ]
-    assert issue_poller._extract_job_id(comments) == "first"
+    assert issue_poller._extract_job_id(comments) == "second"
 
 
 def test_lookup_job_status_returns_none_for_missing_job(tmp_path, monkeypatch):
@@ -807,6 +808,41 @@ def test_handle_completion_posts_fresh_comment_when_only_old_cycle_tag_present(
     assert kinds == ["comment", "label"]
     _, posted = calls[0]
     assert "<!-- rae-local-agent:completion:job_id=job-1 -->" in posted
+
+
+def test_handle_completion_retry_cycle_tracks_new_job_not_old(tmp_path, monkeypatch, caplog):
+    """The full #73 scenario: issue retried, old job terminal with its
+    completion comment already posted, new job still running. The pass
+    must track the NEW job id (last adopt tag) and wait — not re-close
+    the issue against the old job."""
+    import json as _json
+
+    _done_ok_fixture(tmp_path, monkeypatch)  # job-1: old cycle, done/ok on disk.
+    running = tmp_path / "jobs" / "running"
+    running.mkdir(parents=True)
+    (running / "job-2.json").write_text(
+        _json.dumps({"id": "job-2", "spec": "s", "created_at": "x"})
+    )
+    issue = gh_api.Issue(number=5, title="t", url="u", body="b")
+    monkeypatch.setattr(
+        gh_api,
+        "get_issue_comments",
+        lambda s, n: [
+            _ADOPT_COMMENT,  # Old cycle's adopt comment (job-1).
+            "Done — draft PR: https://x/pr/1\n\n<!-- rae-local-agent:completion:job_id=job-1 -->",
+            "Enqueued as `job-2`.\n\n<!-- rae-local-agent:job_id=job-2 -->",
+        ],
+    )
+    writes: list = []
+    monkeypatch.setattr(gh_api, "comment_on_issue", lambda *a: writes.append(a))
+    monkeypatch.setattr(gh_api, "add_label", lambda *a: writes.append(a))
+    caplog.set_level(logging.INFO, logger="rae-local-agent.issue_poller")
+
+    issue_poller._handle_completion("owner/repo", issue)
+
+    assert writes == []  # No comment, and crucially no agent-complete re-add.
+    msgs = [r.message for r in caplog.records]
+    assert any("still waiting on job job-2 (state=running)" in m for m in msgs)
 
 
 def test_handle_completion_ignores_legacy_untagged_completion_comment(tmp_path, monkeypatch):
