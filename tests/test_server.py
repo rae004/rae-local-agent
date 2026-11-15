@@ -15,8 +15,7 @@ import pathlib
 import pytest
 
 import job
-import server
-from server import _make_job_record
+from server import _make_job_record, get_job_status, list_jobs
 
 
 def test_make_job_record_shape(tmp_path: pathlib.Path) -> None:
@@ -174,11 +173,11 @@ def test_make_job_record_accepts_valid_group_ids(tmp_path: pathlib.Path, value: 
 
 
 def _get_status(job_id: str) -> dict:
-    return asyncio.run(server.get_job_status(job_id))
+    return asyncio.run(get_job_status(job_id))
 
 
 def _list_jobs(state: str | None = None) -> list[dict]:
-    return asyncio.run(server.list_jobs(state))
+    return asyncio.run(list_jobs(state))
 
 
 @pytest.fixture
