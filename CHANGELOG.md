@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/rae004/rae-local-agent/compare/v0.16.3...v0.17.0) (2026-11-15)
+
+
+### Features
+
+* **poller:** plain-English hint + example in YAML reject comments ([#57](https://github.com/rae004/rae-local-agent/issues/57)) ([#79](https://github.com/rae004/rae-local-agent/issues/79)) ([7db31a4](https://github.com/rae004/rae-local-agent/commit/7db31a473a76cefd6010cbafb96a9d48416d5c67))
+
 ## [0.16.3](https://github.com/rae004/rae-local-agent/compare/v0.16.2...v0.16.3) (2026-11-15)
 
 
