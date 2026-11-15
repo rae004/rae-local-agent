@@ -51,6 +51,32 @@ _ALLOWED_KEYS: frozenset[str] = frozenset(
 # an indented line, not a fence.
 _FENCE = re.compile(r"^---\s*$", re.MULTILINE)
 
+# Plain-English hints for the PyYAML error classes humans actually hit
+# (#57). Keyed by a distinctive substring of the PyYAML message; the
+# matching hint is prepended to the InvalidIssue message so the reject
+# comment's first line names the likely cause. The raw PyYAML error is
+# kept below it for anyone who reads YAML fluently.
+_YAML_HINTS: tuple[tuple[str, str], ...] = (
+    (
+        "mapping values are not allowed here",
+        "indentation collision — a `key: value` line is indented under a "
+        "list item or another key; every frontmatter key must start at "
+        "column 0, as a sibling of the others",
+    ),
+    (
+        "could not find expected ':'",
+        "a key line is missing its colon, or a stray `-` turned a key into a list item",
+    ),
+)
+
+
+def _yaml_hint(error_text: str) -> str | None:
+    """The plain-English hint for a recognized PyYAML error, or None."""
+    for needle, hint in _YAML_HINTS:
+        if needle in error_text:
+            return hint
+    return None
+
 
 class InvalidIssue(ValueError):
     """Issue body is missing frontmatter, malformed, or semantically invalid.
@@ -89,7 +115,11 @@ def parse_issue_body(body: str) -> dict[str, Any]:
     try:
         fm = yaml.safe_load(frontmatter_text)
     except yaml.YAMLError as e:
-        raise InvalidIssue(f"frontmatter is not valid YAML: {e}") from e
+        msg = f"frontmatter is not valid YAML: {e}"
+        hint = _yaml_hint(str(e))
+        if hint is not None:
+            msg = f"likely cause: {hint}\n\n{msg}"
+        raise InvalidIssue(msg) from e
 
     if fm is None:
         raise InvalidIssue("frontmatter is empty; need at least a `scope`")

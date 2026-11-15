@@ -31,6 +31,7 @@ import pytest
 
 import config
 import gh_api
+import issue_body
 import issue_poller
 import job
 
@@ -465,6 +466,48 @@ def test_reject_tolerates_comment_failure(tmp_path, monkeypatch, _jobs_dir, capl
 
     assert labeled == [("owner/repo", 12, issue_poller.LABEL_INVALID)]
     assert any("reject comment on owner/repo#12 failed" in r.message for r in caplog.records)
+
+
+# ---------- _reject_comment formatting (#57) ---------------------------
+
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _reject_comment_for(body: str) -> str:
+    """Parse `body`, which must fail, and format its reject comment."""
+    with pytest.raises(issue_body.InvalidIssue) as excinfo:
+        issue_body.parse_issue_body(body)
+    return issue_poller._reject_comment(str(excinfo.value))
+
+
+def test_reject_comment_always_includes_known_good_example():
+    comment = issue_poller._reject_comment("any reason at all")
+    assert "```yaml" in comment
+    assert "scope:" in comment
+    assert "- path/to/file.py" in comment
+
+
+def test_reject_comment_hints_on_mapping_values_error():
+    comment = _reject_comment_for("---\nscope\ntitle: x\n---\n\nspec")
+    assert "likely cause: indentation collision" in comment
+    assert "mapping values are not allowed here" in comment  # raw error kept
+
+
+def test_reject_comment_hints_on_missing_colon_error():
+    comment = _reject_comment_for("---\nscope:\n  - a.py\ntitle\nskip_tests: false\n---\n\nspec")
+    assert "likely cause: a key line is missing its colon" in comment
+    assert "could not find expected ':'" in comment  # raw error kept
+
+
+def test_reject_comment_for_issue_144_fixture_names_cause_on_first_line():
+    """The body that motivated #57, verbatim: the comment's first line
+    must name the likely cause, not just the parser's give-up point."""
+    body = (_FIXTURES / "issue_body_144.md").read_text()
+    comment = _reject_comment_for(body)
+    first_line = comment.splitlines()[0]
+    assert "likely cause: indentation collision" in first_line
+    assert "mapping values are not allowed here" in comment  # raw error kept
 
 
 # ---------- signal + sleep ---------------------------------------------

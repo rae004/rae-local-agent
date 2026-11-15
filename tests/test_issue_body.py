@@ -201,6 +201,22 @@ def test_body_with_bad_yaml_rejected():
         parse_issue_body(body)
 
 
+def test_bad_yaml_with_recognized_error_gets_hint_prepended():
+    body = "---\nscope\ntitle: x\n---\n\nspec"
+    with pytest.raises(InvalidIssue) as excinfo:
+        parse_issue_body(body)
+    msg = str(excinfo.value)
+    assert msg.startswith("likely cause: indentation collision")
+    assert "frontmatter is not valid YAML" in msg  # raw error kept
+
+
+def test_bad_yaml_with_unrecognized_error_keeps_plain_message():
+    body = "---\nscope:\n\t- a.py\n---\n\nspec"  # tab: no hint mapped for it
+    with pytest.raises(InvalidIssue) as excinfo:
+        parse_issue_body(body)
+    assert str(excinfo.value).startswith("frontmatter is not valid YAML")
+
+
 def test_body_with_empty_frontmatter_rejected():
     body = "---\n---\n\nspec here"
     with pytest.raises(InvalidIssue, match="frontmatter is empty"):

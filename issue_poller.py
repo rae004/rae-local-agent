@@ -104,10 +104,27 @@ def _accept_comment(job_id: str) -> str:
     return f"Enqueued as `{job_id}`.\n\n<!-- rae-local-agent:job_id={job_id} -->"
 
 
+# Known-good frontmatter shape appended to every reject comment so the
+# author can pattern-match against it instead of decoding a YAML parse
+# error (#57).
+_FRONTMATTER_EXAMPLE = (
+    "A known-good frontmatter shape:\n"
+    "\n"
+    "```yaml\n"
+    "---\n"
+    "scope:\n"
+    "  - path/to/file.py\n"
+    'title: "chore: ..."\n'
+    "---\n"
+    "```"
+)
+
+
 def _reject_comment(reason: str) -> str:
     """Comment body posted when parse or enqueue fails."""
     return (
         f"Could not enqueue this issue: {reason}\n\n"
+        f"{_FRONTMATTER_EXAMPLE}\n\n"
         f"Fix the issue body, then remove the `{LABEL_INVALID}` label "
         f"to retry."
     )
