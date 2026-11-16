@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/rae004/rae-local-agent/compare/v0.19.1...v0.20.0) (2026-11-16)
+
+
+### Features
+
+* issue template pre-fills valid local-agent frontmatter ([#90](https://github.com/rae004/rae-local-agent/issues/90)) ([377790e](https://github.com/rae004/rae-local-agent/commit/377790eb69187f19292b58b68d96e0e4ebdd6d4c))
+
 ## [0.19.1](https://github.com/rae004/rae-local-agent/compare/v0.19.0...v0.19.1) (2026-11-15)
 
 
