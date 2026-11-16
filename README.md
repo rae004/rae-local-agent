@@ -366,7 +366,12 @@ C4, every `poll_interval_seconds` the poller does two passes per repo:
 `label:local-agent -label:agent-queued -label:agent-invalid`:
 
 1. Parses the YAML frontmatter + markdown prose from the issue body
-   (format in `PHASE_C_DESIGN.md` § "Issue → job translation").
+   (format in `PHASE_C_DESIGN.md` § "Issue → job translation"). The
+   easy way to get this right: open a new issue with the **"Local
+   agent task"** template
+   ([`.github/ISSUE_TEMPLATE/local-agent-task.md`](.github/ISSUE_TEMPLATE/local-agent-task.md))
+   — it pre-fills valid frontmatter with the optional keys explained
+   in YAML comments, and applies the `local-agent` label for you.
 2. On parse success: adds `agent-queued`, writes the job to
    `jobs/pending/`, posts a comment with the job id. The worker
    picks the job up and opens a draft PR.
