@@ -27,7 +27,7 @@ jobs:
       # the result as the bot. Skipped when release-please didn't touch a PR.
       - name: Checkout release PR branch
         if: ${{ steps.release.outputs.prs_created == 'true' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ fromJson(steps.release.outputs.pr).headBranchName }}
 
