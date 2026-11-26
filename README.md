@@ -120,7 +120,7 @@ every shape of worker outcome correctly.
 ### Operating the service
 
 Prereqs on each repo in `repos.yaml` — the four poller labels, defined
-in [`.github/repo/labels.json`](.github/repo/labels.json):
+under `labels` in [`.github/repo-settings.json`](.github/repo-settings.json):
 
 ```bash
 uv run python scripts/polled_repo_labels.py diff    # exit 1 on drift
@@ -506,11 +506,12 @@ Commits use [Conventional Commits](https://www.conventionalcommits.org/)
 (`feat:`, `fix:`, `chore:`, …) — release-please reads them to open release PRs
 that bump the version in `pyproject.toml` and update `CHANGELOG.md`.
 
-GitHub repository settings (merge options, branch ruleset with required CI
-checks, Actions permissions) are kept as code in
-[`.github/repo/`](.github/repo/). `python3 scripts/repo_settings.py diff`
-shows drift against the live repo, `apply` pushes the files (needs admin);
-CI diffs on any PR that touches that folder.
+GitHub repository settings (merge options, branch ruleset, Actions
+permissions) come from the shared baseline in
+[`rae004/.github`](https://github.com/rae004/.github) and are applied from
+there. The only part kept here is
+[`.github/repo-settings.json`](.github/repo-settings.json): the CI jobs that
+must pass before a PR can merge, the poller labels, and one ruleset flag.
 
 ## License
 
