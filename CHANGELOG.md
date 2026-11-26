@@ -1,5 +1,9 @@
 # Changelog
 
+Releases after 0.20.0 are tagged directly on the merged commit and documented on the
+[GitHub Releases page](https://github.com/rae004/rae-local-agent/releases); this file is
+no longer updated.
+
 ## [0.20.0](https://github.com/rae004/rae-local-agent/compare/v0.19.1...v0.20.0) (2026-11-16)
 
 

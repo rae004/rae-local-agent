@@ -7,8 +7,12 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    # The PR title becomes the squash commit, and release.yml reads its type.
+    # A bump to a runtime dependency is a `fix`, so it cuts a patch release;
+    # a dev-only bump is a `chore` and releases nothing.
     commit-message:
-      prefix: "chore"
+      prefix: "fix"
+      prefix-development: "chore"
       include: "scope"
     labels:
       - "dependencies"

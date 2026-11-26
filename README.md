@@ -503,8 +503,15 @@ uv run pytest
 To auto-fix: `uv run ruff check --fix .` and `uv run ruff format .`.
 
 Commits use [Conventional Commits](https://www.conventionalcommits.org/)
-(`feat:`, `fix:`, `chore:`, …) — release-please reads them to open release PRs
-that bump the version in `pyproject.toml` and update `CHANGELOG.md`.
+(`feat:`, `fix:`, `chore:`, …). Every PR is squash-merged with its title as the
+commit message, and the shared release workflow in
+[`rae004/.github`](https://github.com/rae004/.github#releases) tags that commit
+directly: `feat` → minor, `fix`/`perf` → patch, anything else → no release
+(breaking changes bump the minor while on 0.x). There is no release PR; the
+version lives in git tags only, `pyproject.toml` carries a fixed `0.0.0`
+placeholder, and release notes are on the
+[Releases page](https://github.com/rae004/rae-local-agent/releases). A required
+check rejects PR titles that are not Conventional Commits.
 
 GitHub repository settings (merge options, branch ruleset, Actions
 permissions) come from the shared baseline in

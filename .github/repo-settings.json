@@ -1,6 +1,7 @@
 {
   "required_status_checks": [
-    "check"
+    "check",
+    "title / Conventional title"
   ],
   "pull_request": {
     "require_extra_approval_for_unattributed_changes": false
