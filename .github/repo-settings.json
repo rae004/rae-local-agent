@@ -1,0 +1,30 @@
+{
+  "required_status_checks": [
+    "check"
+  ],
+  "pull_request": {
+    "require_extra_approval_for_unattributed_changes": false
+  },
+  "labels": [
+    {
+      "name": "local-agent",
+      "color": "0075ca",
+      "description": "Hand to local agent"
+    },
+    {
+      "name": "agent-queued",
+      "color": "fbca04",
+      "description": "Poller enqueued"
+    },
+    {
+      "name": "agent-invalid",
+      "color": "d93f0b",
+      "description": "Parse or enqueue failed"
+    },
+    {
+      "name": "agent-complete",
+      "color": "0e8a16",
+      "description": "Poller posted final result"
+    }
+  ]
+}
