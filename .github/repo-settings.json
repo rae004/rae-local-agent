@@ -26,6 +26,21 @@
       "name": "agent-complete",
       "color": "0e8a16",
       "description": "Poller posted final result"
+    },
+    {
+      "name": "dependencies",
+      "color": "0366d6",
+      "description": "Dependency update"
+    },
+    {
+      "name": "github-actions",
+      "color": "bfd4f2",
+      "description": "Workflows and GitHub Actions"
+    },
+    {
+      "name": "python",
+      "color": "2b67c6",
+      "description": "Python code or dependencies"
     }
   ]
 }
