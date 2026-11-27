@@ -1,38 +1,26 @@
 name: CodeQL
 
+# Code scanning runs through the shared workflow in rae004/.github. It sets
+# the query set and the CodeQL version, and always scans the workflow files;
+# this repo passes only the languages its code is written in. Docs:
+# https://github.com/rae004/.github#code-scanning
+
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   schedule:
-    # Weekly, Monday 09:00 UTC. Keeps CodeQL alerts fresh even on quiet weeks.
-    - cron: "0 9 * * 1"
+    - cron: "0 9 * * 1" # Mondays 09:00 UTC, so alerts stay fresh in quiet weeks
+
+permissions:
+  contents: read
 
 jobs:
   analyze:
-    name: Analyze (${{ matrix.language }})
-    runs-on: ubuntu-latest
     permissions:
-      actions: read
-      contents: read
       security-events: write
-
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [python, actions]
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
-        with:
-          languages: ${{ matrix.language }}
-          queries: security-and-quality
-
-      - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
-        with:
-          category: "/language:${{ matrix.language }}"
+      contents: read
+      actions: read
+    uses: rae004/.github/.github/workflows/codeql.yml@57800fdc8271531a03eb1cf7f7a4b41ca841a896 # v0.2.0
+    with:
+      languages: '["python"]'
