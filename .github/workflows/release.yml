@@ -18,4 +18,4 @@ jobs:
   release:
     permissions:
       contents: write
-    uses: rae004/.github/.github/workflows/release.yml@main
+    uses: rae004/.github/.github/workflows/release.yml@ed86ea9408fc37be4796ace90d06ff29a6453e89 # main 2026-11-27
