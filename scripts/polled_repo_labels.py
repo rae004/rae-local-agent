@@ -6,8 +6,10 @@
 
 The poller needs its four labels on every repo it polls, and `repos.yaml`
 is machine-local config, so CI can't check this — run it locally. Desired
-labels are the `labels` list in `.github/repo-settings.json` (the same list
-the fleet baseline in `rae004/.github` keeps in place on THIS repo).
+labels are the poller's own entries (`local-agent` and `agent-*`) in the
+`labels` list in `.github/repo-settings.json`, the list the fleet baseline in
+`rae004/.github` keeps in place on THIS repo. That list also holds labels
+that belong to this repo alone, such as Dependabot's; those are not synced.
 Matching is by exact name, extra live labels are ignored, and a repo this
 token can't read is skipped rather than failing the run (mirroring the
 poller's own per-repo resilience). Talks to the API through `gh api`.
@@ -25,6 +27,11 @@ sys.path.insert(0, str(ROOT))
 from config import DEFAULT_CONFIG_PATH, InvalidConfig, load_config  # noqa: E402
 
 SETTINGS_FILE = ROOT / ".github" / "repo-settings.json"
+
+
+def is_poller_label(name: str) -> bool:
+    """True for the labels the poller reads and writes on a polled repo."""
+    return name == "local-agent" or name.startswith("agent-")
 
 
 class ApiError(Exception):
@@ -87,7 +94,11 @@ def main(argv: list[str]) -> int:
     except InvalidConfig as e:
         print(f"error: invalid config at {DEFAULT_CONFIG_PATH}: {e}", file=sys.stderr)
         return 1
-    desired = json.loads(SETTINGS_FILE.read_text())["labels"]
+    desired = [
+        label
+        for label in json.loads(SETTINGS_FILE.read_text())["labels"]
+        if is_poller_label(label["name"])
+    ]
     verb = "Applying" if apply else "Comparing"
     print(f"{verb} poller labels against {len(cfg.repos)} polled repo(s)")
     drifted = 0
