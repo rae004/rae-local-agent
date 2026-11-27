@@ -1,45 +1,17 @@
-name: PR Title Lint
+name: PR title
 
-# release-please parses the squash-merge commit's subject line, which GitHub
-# fills from the PR title. If the title isn't Conventional Commits-shaped, the
-# resulting commit on main doesn't trigger a release — a release gets silently
-# skipped. This check fails PRs with non-conforming titles so we catch it
-# before the squash button, not after.
+# The PR title becomes the squash commit message, and release.yml reads that
+# message to decide the version. This calls the shared check in rae004/.github
+# so a malformed title fails here instead of silently skipping a release.
+# Rules and docs: https://github.com/rae004/.github#pr-title-check
 
 on:
   pull_request:
-    types: [opened, edited, synchronize]
+    types: [opened, edited, synchronize, reopened]
 
 permissions:
-  pull-requests: read
+  contents: read
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      # Pinned to a commit SHA per CodeQL supply-chain hardening.
-      # Dependabot bumps the SHA weekly; update the trailing version tag
-      # in lockstep when it opens a PR.
-      - uses: amannn/action-semantic-pull-request@2252a14e810aa9b85c2d560bd7070c802206ecf6 # v6.1.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          # Allowed types — keep in lockstep with release-please-config.json's
-          # `changelog-sections`. Any type here that's `hidden` there will
-          # pass the lint but not trigger a release-please PR update.
-          types: |
-            feat
-            fix
-            perf
-            refactor
-            docs
-            chore
-            test
-            ci
-            build
-            style
-            revert
-          requireScope: false
-          # Default subjectPattern. Leaving default lets release-please's own
-          # commit-parsing be the source of truth; this check only validates
-          # the type prefix shape, not the subject's wording.
+  title:
+    uses: rae004/.github/.github/workflows/pr-title.yml@main

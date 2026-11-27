@@ -1,0 +1,21 @@
+name: Release
+
+# Releases are cut by the shared workflow in rae004/.github: each push to main
+# is one squash-merged PR, and that commit is tagged directly when its
+# Conventional Commit type calls for a release (feat -> minor, fix/perf ->
+# patch, anything else -> no release; breaking changes bump the minor while
+# on 0.x). No release PR, no release commit. Rules and docs:
+# https://github.com/rae004/.github#releases
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: rae004/.github/.github/workflows/release.yml@main
